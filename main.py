@@ -109,9 +109,13 @@ def option_realtime():
 
 
 def option_generate_word():
-    """Genera el documento Word."""
+    """Genera los documentos Word (Informe académico y Guía explicativa)."""
     from src.generate_document import generate_word_document
+    from src.generate_complete_guide import generate_comprehensive_guide
+    print("\n  [1/2] Generando Informe Académico Formal...")
     generate_word_document()
+    print("\n  [2/2] Generando Guía Explicativa Completa...")
+    generate_comprehensive_guide()
 
 
 def option_show_architecture():
