@@ -1,0 +1,167 @@
+# 🎭 Reconocimiento de Emociones Faciales con Redes Neuronales Convolucionales (CNN)
+
+> **Autor:** Manuel Fabrizzio Risco Gil  
+> **Curso:** Sistemas Inteligentes y Machine Learning — Ciclo 9  
+> **Framework:** PyTorch & OpenCV  
+
+---
+
+## 📌 1. Descripción del Proyecto
+
+Este proyecto es una solución integral de **Visión por Computadora y Deep Learning** diseñada para clasificar expresiones faciales humanas en 7 emociones fundamentales a partir de imágenes y video en tiempo real.
+
+El modelo implementa una arquitectura personalizada de **Red Neuronal Convolucional (CNN)** desarrollada en **PyTorch**, con aceleración por hardware (**NVIDIA CUDA + Automatic Mixed Precision**) y técnicas de regularización avanzadas para mitigar el sobreajuste (*overfitting*).
+
+---
+
+## 🧠 2. ¿Qué modelo de Inteligencia Artificial se utiliza?
+
+El núcleo del sistema es un modelo de **Deep Learning** perteneciente a la familia de las **Redes Neuronales Convolucionales (CNN - *Convolutional Neural Network*)**, denominado `EmotionCNN`.
+
+### 🔄 Flujo de Datos del Modelo
+```mermaid
+graph LR
+    Input["🖼️ Input<br/>48x48 Grayscale"] --> B1["Bloque 1<br/>32 Filtros"]
+    B1 --> B2["Bloque 2<br/>64 Filtros"]
+    B2 --> B3["Bloque 3<br/>128 Filtros"]
+    B3 --> B4["Bloque 4<br/>256 Filtros"]
+    B4 --> FC["Capas Densas<br/>512 & 256 neuronas"]
+    FC --> Out["🎯 7 Clases<br/>Softmax"]
+```
+
+### 🧱 Detalle de la Arquitectura (`EmotionCNN`)
+1. **Entrada:** Imágenes en escala de grises de $48 \times 48$ píxeles (1 canal).
+2. **4 Bloques Convolucionales:**
+   * **Bloque 1 (32 filtros, $3 \times 3$):** Extracción de características de bajo nivel (bordes, líneas y texturas básicas).
+   * **Bloque 2 (64 filtros, $3 \times 3$):** Reconocimiento de formas geométricas simples (cejas, contornos de ojos).
+   * **Bloque 3 (128 filtros, $3 \times 3$):** Identificación de partes faciales compuestas (boca, nariz, pliegues).
+   * **Bloque 4 (256 filtros, $3 \times 3$):** Patrones globales y expresiones faciales complejas.
+   * *Cada bloque incluye:* `Conv2D` $\rightarrow$ `BatchNorm2d` $\rightarrow$ `ReLU` $\rightarrow$ `MaxPool2d(2x2)` $\rightarrow$ `Dropout(0.25)`.
+3. **Bloque Clasificador (Fully Connected / Dense):**
+   * **Capa Oculta 1:** 512 neuronas + `BatchNorm1d` + `ReLU` + `Dropout(0.5)`.
+   * **Capa Oculta 2:** 256 neuronas + `BatchNorm1d` + `ReLU` + `Dropout(0.5)`.
+   * **Capa de Salida:** 7 neuronas lineales (una por cada clase objetivo).
+
+---
+
+## 🏷️ 3. Emociones Clasificadas (7 Clases)
+
+| ID | Emoción en Español | Emoción en Inglés | Emoji |
+|:--:|:------------------|:------------------|:-----:|
+| 0  | Enojado           | Angry             | 😠    |
+| 1  | Disgusto          | Disgust           | 🤢    |
+| 2  | Miedo             | Fear              | 😨    |
+| 3  | Feliz             | Happy             | 😃    |
+| 4  | Triste            | Sad               | 😢    |
+| 5  | Sorprendido       | Surprise          | 😲    |
+| 6  | Neutral           | Neutral           | 😐    |
+
+---
+
+## 📊 4. Dataset (FER2013)
+
+El modelo está entrenado sobre el dataset estándar **FER2013** (*Facial Expression Recognition 2013*):
+* **Resolución:** $48 \times 48$ píxeles, escala de grises.
+* **Volumen:** ~35,887 imágenes etiquetadas.
+* **Técnicas de Aumento de Datos (*Data Augmentation*):**
+  * Volteo horizontal aleatorio (`RandomHorizontalFlip`).
+  * Rotaciones ligeras (`RandomRotation`).
+  * Traslaciones y transformaciones afines (`RandomAffine`).
+  * Ajustes de contraste y brillo (`ColorJitter`).
+
+---
+
+## 📂 5. Estructura del Repositorio
+
+```text
+proyecto_emociones/
+├── data/                       # Dataset FER2013 (carpetas train/test)
+├── outputs/
+│   ├── logs/                   # Historial de entrenamiento (.json)
+│   ├── models/                 # Checkpoints del modelo (.pth)
+│   │   ├── mejor_modelo_emociones.pth
+│   │   └── ultimo_modelo_emociones.pth
+│   ├── plots/                  # Gráficas de métricas y matrices de confusión
+│   └── Actividad_CNN_...docx   # Reporte formal generado en Word
+├── src/
+│   ├── __init__.py
+│   ├── config.py               # Hiperparámetros, rutas y configuración CUDA/AMP
+│   ├── dataset.py              # Carga de datos, DataLoaders y Data Augmentation
+│   ├── evaluate.py             # Métricas (Accuracy, Precision, Recall, F1) y Confusion Matrix
+│   ├── generate_document.py    # Generador automatizado de informes en .docx
+│   ├── model.py                # Arquitectura PyTorch de la EmotionCNN
+│   ├── predict.py              # Inferencia sobre imágenes estáticas
+│   ├── realtime.py             # Detección en vivo con Webcam y OpenCV (Haar Cascades)
+│   └── train.py                # Bucle de entrenamiento con Early Stopping y optimizador
+├── main.py                     # Menú interactivo por consola
+├── requirements.txt            # Dependencias del proyecto
+├── pyproject.toml              # Configuración del paquete
+└── README.md                   # Documentación principal
+```
+
+---
+
+## ⚙️ 6. Módulos y Componentes Clave
+
+* **`main.py`**: Orquestador principal con menú interactivo en consola para ejecutar cualquier funcionalidad en 1 clic.
+* **`src/train.py`**: Entrenamiento con optimizador `AdamW`, función de pérdida `CrossEntropyLoss`, planificador `ReduceLROnPlateau`, `Early Stopping` por paciencia de épocas y `Automatic Mixed Precision (AMP)` para aceleración en GPUs RTX.
+* **`src/evaluate.py`**: Evaluación sobre el conjunto de test, generando el reporte de clasificación de Scikit-Learn y gráficas con Seaborn/Matplotlib.
+* **`src/realtime.py`**: Captura de video en tiempo real mediante OpenCV, detección del rostro mediante clasificador en cascada de Haar (`haarcascade_frontalface_default.xml`), recorte dinámico, preprocesamiento e inferencia inmediata con la CNN.
+* **`src/generate_document.py`**: Script que genera automáticamente un documento formal `.docx` listo para entrega académica, incluyendo marco teórico, fórmulas, parámetros y gráficas resultantes.
+
+---
+
+## 🚀 7. Guía de Instalación y Ejecución
+
+### Prerrequisitos
+* Python 3.10 o superior (con soporte para PyTorch).
+* (Opcional recomendado) GPU NVIDIA con controladores CUDA actualizados.
+
+### 1. Clonar el repositorio
+```bash
+git clone https://github.com/ManuelRisco/proyecto_emociones.git
+cd proyecto_emociones
+```
+
+### 2. Crear y activar un entorno virtual
+```bash
+# En Windows:
+python -m venv .venv
+.venv\Scripts\activate
+```
+
+### 3. Instalar dependencias
+```bash
+pip install -r requirements.txt
+```
+
+### 4. Iniciar el programa
+Ejecuta el menú interactivo:
+```bash
+python main.py
+```
+
+Se desplegará el menú interactivo:
+```text
+============================================================
+  MENU PRINCIPAL
+============================================================
+  1. [TRAIN]    Entrenar modelo CNN
+  2. [EVAL]     Evaluar modelo entrenado
+  3. [PREDICT]  Predecir emocion en imagen
+  4. [WEBCAM]   Demo en tiempo real (webcam)
+  5. [WORD]     Generar documento Word
+  6. [ARCH]     Ver arquitectura del modelo
+  7. [EXIT]     Salir
+============================================================
+```
+
+---
+
+## 📈 8. Resultados y Métricas
+
+* **Métricas Evaluadas:** Exactitud (*Accuracy*), Precisión (*Precision*), Sensibilidad (*Recall*) y F1-Score general y por emoción.
+* **Artefactos Generados:**
+  * Curvas de pérdida y exactitud por época (`historial_entrenamiento.png`).
+  * Matriz de confusión absoluta y normalizada (`matriz_confusion.png`).
+  * Desglose de exactitud por clase de emoción (`accuracy_por_emocion.png`).
