@@ -1,13 +1,14 @@
 # ============================================================================
-# SCRIPT DE ENTRENAMIENTO DE LA CNN
+# SCRIPT DE ENTRENAMIENTO DE LA RED NEURONAL (ResNet-SE / CNN)
 # Reconocimiento de Emociones Faciales
 # Autor: Manuel Fabrizzio Risco Gil
+# Curso: Sistemas Inteligentes y Machine Learning - Ciclo 9
 # ============================================================================
-# Este script entrena la CNN usando la GPU (RTX 5060 Ti) para:
-# 1. Aprender patrones faciales de las 7 emociones
-# 2. Validar el rendimiento en cada época
-# 3. Guardar el mejor modelo automáticamente
-# 4. Generar gráficas de entrenamiento (loss y accuracy)
+# Este script entrena la arquitectura seleccionada con:
+# 1. Ponderación de Clases (Class Weights) para equilibrar emociones minoritarias
+# 2. Label Smoothing para evitar sobreconfianza en etiquetas ruidosas
+# 3. Optimizador AdamW + Programador de Learning Rate adaptativo
+# 4. Aceleración GPU con Precisión Mixta (AMP / FP16) para Tensor Cores
 # ============================================================================
 
 import os
@@ -38,28 +39,15 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 from src.config import (
     DEVICE, NUM_EPOCHS, LEARNING_RATE, WEIGHT_DECAY,
     EARLY_STOPPING_PATIENCE, BEST_MODEL_PATH, LAST_MODEL_PATH,
-    PLOTS_DIR, LOGS_DIR, EMOTION_LABELS, USE_AMP
+    PLOTS_DIR, LOGS_DIR, EMOTION_LABELS, USE_AMP, DEFAULT_ARCHITECTURE
 )
 from src.dataset import load_data
-from src.model import EmotionCNN, get_model_summary
+from src.model import build_model, get_model_summary
 
 
 def train_one_epoch(model, train_loader, criterion, optimizer, scaler, device, epoch, num_epochs):
     """
     Entrena el modelo por una época completa con optimización de GPU y Mixed Precision.
-
-    Args:
-        model: modelo CNN
-        train_loader: DataLoader de entrenamiento
-        criterion: función de pérdida
-        optimizer: optimizador
-        scaler: GradScaler para Automatic Mixed Precision
-        device: dispositivo (GPU/CPU)
-        epoch: número de época actual
-        num_epochs: total de épocas
-
-    Returns:
-        tuple: (loss promedio, accuracy)
     """
     model.train()
     running_loss = 0.0
@@ -69,19 +57,17 @@ def train_one_epoch(model, train_loader, criterion, optimizer, scaler, device, e
 
     pbar = tqdm(
         train_loader,
-        desc=f"  Epoca {epoch+1}/{num_epochs} [Train]",
+        desc=f"  Epoca {epoch+1:2d}/{num_epochs} [Train]",
         ncols=100,
         bar_format="{l_bar}{bar}| {n_fmt}/{total_fmt} [{elapsed}<{remaining}]"
     )
 
     for batch_idx, (images, labels) in enumerate(pbar):
-        # Mover datos a GPU de forma no bloqueante
         images = images.to(device, non_blocking=True)
         labels = labels.to(device, non_blocking=True)
 
         optimizer.zero_grad(set_to_none=True)
 
-        # Forward y Backward pass con Precision Mixta
         if use_cuda_amp:
             with torch.amp.autocast(device_type="cuda", dtype=torch.float16):
                 outputs = model(images)
@@ -95,37 +81,23 @@ def train_one_epoch(model, train_loader, criterion, optimizer, scaler, device, e
             loss.backward()
             optimizer.step()
 
-        # Estadísticas
         running_loss += loss.item()
         _, predicted = torch.max(outputs.data, 1)
         total += labels.size(0)
         correct += (predicted == labels).sum().item()
 
-        # Actualizar barra de progreso
         current_loss = running_loss / (batch_idx + 1)
         current_acc = 100.0 * correct / total
         pbar.set_postfix({"Loss": f"{current_loss:.4f}", "Acc": f"{current_acc:.1f}%"})
 
     avg_loss = running_loss / len(train_loader)
     accuracy = 100.0 * correct / total
-
     return avg_loss, accuracy
 
 
 def validate(model, val_loader, criterion, device, epoch, num_epochs):
     """
     Evalúa el modelo en el conjunto de validación con aceleración de GPU.
-
-    Args:
-        model: modelo CNN
-        val_loader: DataLoader de validación
-        criterion: función de pérdida
-        device: dispositivo (GPU/CPU)
-        epoch: número de época actual
-        num_epochs: total de épocas
-
-    Returns:
-        tuple: (loss promedio, accuracy)
     """
     model.eval()
     running_loss = 0.0
@@ -135,7 +107,7 @@ def validate(model, val_loader, criterion, device, epoch, num_epochs):
 
     pbar = tqdm(
         val_loader,
-        desc=f"  Epoca {epoch+1}/{num_epochs} [Val]  ",
+        desc=f"  Epoca {epoch+1:2d}/{num_epochs} [Val]  ",
         ncols=100,
         bar_format="{l_bar}{bar}| {n_fmt}/{total_fmt} [{elapsed}<{remaining}]"
     )
@@ -160,22 +132,17 @@ def validate(model, val_loader, criterion, device, epoch, num_epochs):
 
     avg_loss = running_loss / len(val_loader)
     accuracy = 100.0 * correct / total
-
     return avg_loss, accuracy
 
 
-def plot_training_history(history, save_dir):
+def plot_training_history(history, save_dir, arch_name=""):
     """
     Genera gráficas de loss y accuracy del entrenamiento.
-
-    Args:
-        history: diccionario con listas de métricas por época
-        save_dir: directorio donde guardar las gráficas
     """
     epochs_range = range(1, len(history["train_loss"]) + 1)
 
     fig, axes = plt.subplots(1, 2, figsize=(14, 5))
-    fig.suptitle("Historial de Entrenamiento - CNN Emociones Faciales",
+    fig.suptitle(f"Historial de Entrenamiento - {arch_name.upper()} Emociones Faciales",
                  fontsize=14, fontweight="bold")
 
     # Gráfica de Loss
@@ -207,37 +174,39 @@ def plot_training_history(history, save_dir):
     print(f"\n   [GRAFICA] Graficas guardadas en: {plot_path}")
 
 
-def train():
+def train(arch=DEFAULT_ARCHITECTURE, num_epochs=NUM_EPOCHS, lr=LEARNING_RATE):
     """
     Función principal de entrenamiento.
-    Ejecuta el ciclo completo de entrenamiento de la CNN.
+    Ejecuta el ciclo completo de entrenamiento.
     """
     print("\n" + "=" * 60)
-    print(">>> INICIANDO ENTRENAMIENTO DE LA CNN")
+    print(f">>> INICIANDO ENTRENAMIENTO: {arch.upper()}")
     print("=" * 60)
 
-    # ── Cargar datos ──
-    train_loader, val_loader, _ = load_data()
+    # ── Cargar datos con pesos de clases ──
+    train_loader, val_loader, _, class_weights = load_data(return_weights=True)
 
     # ── Crear modelo ──
-    model = EmotionCNN().to(DEVICE)
+    model = build_model(arch=arch, num_classes=len(EMOTION_LABELS)).to(DEVICE)
     get_model_summary(model)
 
-    # ── Configurar entrenamiento ──
-    criterion = nn.CrossEntropyLoss()
+    # ── Función de pérdida con Class Weights y Label Smoothing ──
+    criterion = nn.CrossEntropyLoss(
+        weight=class_weights,
+        label_smoothing=0.05
+    )
 
-    optimizer = optim.Adam(
+    # ── Optimizador AdamW + Scheduler Cosine Annealing ──
+    optimizer = optim.AdamW(
         model.parameters(),
-        lr=LEARNING_RATE,
+        lr=lr,
         weight_decay=WEIGHT_DECAY
     )
 
-    scheduler = optim.lr_scheduler.ReduceLROnPlateau(
+    scheduler = optim.lr_scheduler.CosineAnnealingLR(
         optimizer,
-        mode="min",
-        factor=0.5,
-        patience=5,
-        min_lr=1e-6
+        T_max=num_epochs,
+        eta_min=1e-6
     )
 
     # GradScaler para Automatic Mixed Precision (AMP)
@@ -248,6 +217,7 @@ def train():
         "train_acc": [],
         "val_loss": [],
         "val_acc": [],
+        "arch": arch,
     }
 
     best_val_loss = float("inf")
@@ -255,11 +225,13 @@ def train():
     patience_counter = 0
 
     print(f"\n   Configuracion:")
-    print(f"   |-- Epocas:        {NUM_EPOCHS}")
-    print(f"   |-- Learning Rate: {LEARNING_RATE}")
+    print(f"   |-- Arquitectura:  {arch.upper()} ({model.__class__.__name__})")
+    print(f"   |-- Epocas:        {num_epochs}")
+    print(f"   |-- Learning Rate: {lr}")
     print(f"   |-- Batch Size:    {train_loader.batch_size}")
     print(f"   |-- Dispositivo:   {DEVICE}")
     print(f"   |-- Precision:     {'Mixed Precision (FP16/AMP)' if (DEVICE.type == 'cuda' and USE_AMP) else 'FP32'}")
+    print(f"   |-- Ponderacion:   Ponderacion de clases activa (Class Weights)")
     print(f"   +-- Early Stop:    {EARLY_STOPPING_PATIENCE} epocas sin mejora")
 
     start_time = time.time()
@@ -267,19 +239,19 @@ def train():
     # ══════════════════════════════════════════════════════════════
     # CICLO DE ENTRENAMIENTO
     # ══════════════════════════════════════════════════════════════
-    for epoch in range(NUM_EPOCHS):
+    for epoch in range(num_epochs):
         print(f"\n{'─' * 60}")
 
         # Entrenamiento
         train_loss, train_acc = train_one_epoch(
             model, train_loader, criterion, optimizer, scaler, DEVICE,
-            epoch, NUM_EPOCHS
+            epoch, num_epochs
         )
 
         # Validación
         val_loss, val_acc = validate(
             model, val_loader, criterion, DEVICE,
-            epoch, NUM_EPOCHS
+            epoch, num_epochs
         )
 
         # Guardar historial
@@ -288,25 +260,28 @@ def train():
         history["val_loss"].append(val_loss)
         history["val_acc"].append(val_acc)
 
-        # Actualizar learning rate
-        scheduler.step(val_loss)
+        # Actualizar learning rate con CosineAnnealing
+        scheduler.step()
         current_lr = optimizer.param_groups[0]["lr"]
 
         # Resumen de la época
-        print(f"\n  Resumen Epoca {epoch+1}/{NUM_EPOCHS}:")
+        print(f"\n  Resumen Epoca {epoch+1}/{num_epochs}:")
         print(f"     Train  -> Loss: {train_loss:.4f} | Acc: {train_acc:.2f}%")
         print(f"     Val    -> Loss: {val_loss:.4f} | Acc: {val_acc:.2f}%")
         print(f"     LR: {current_lr:.6f}")
 
         # ── Early Stopping y guardado del mejor modelo ──
-        if val_loss < best_val_loss:
-            best_val_loss = val_loss
-            best_val_acc = val_acc
+        if val_loss < best_val_loss or val_acc > best_val_acc:
+            if val_loss < best_val_loss:
+                best_val_loss = val_loss
+            if val_acc > best_val_acc:
+                best_val_acc = val_acc
             patience_counter = 0
 
-            # Guardar mejor modelo
+            # Guardar mejor modelo con metadatos de arquitectura
             torch.save({
                 "epoch": epoch + 1,
+                "arch": arch,
                 "model_state_dict": model.state_dict(),
                 "optimizer_state_dict": optimizer.state_dict(),
                 "val_loss": val_loss,
@@ -314,7 +289,7 @@ def train():
                 "history": history,
             }, BEST_MODEL_PATH)
 
-            print(f"     [OK] MEJOR MODELO GUARDADO (Val Acc: {val_acc:.2f}%)")
+            print(f"     [OK] MEJOR MODELO GUARDADO (Val Acc: {val_acc:.2f}% | Val Loss: {val_loss:.4f})")
         else:
             patience_counter += 1
             print(f"     [...] Sin mejora ({patience_counter}/{EARLY_STOPPING_PATIENCE})")
@@ -326,6 +301,7 @@ def train():
     # ── Guardar último modelo ──
     torch.save({
         "epoch": epoch + 1,
+        "arch": arch,
         "model_state_dict": model.state_dict(),
         "optimizer_state_dict": optimizer.state_dict(),
         "history": history,
@@ -336,11 +312,12 @@ def train():
     seconds = int(total_time % 60)
 
     # ── Generar gráficas ──
-    plot_training_history(history, PLOTS_DIR)
+    plot_training_history(history, PLOTS_DIR, arch_name=arch)
 
     # ── Guardar log ──
     log_path = os.path.join(LOGS_DIR, "entrenamiento_log.json")
     log_data = {
+        "arch": arch,
         "total_epochs": epoch + 1,
         "best_val_loss": best_val_loss,
         "best_val_acc": best_val_acc,
@@ -354,6 +331,7 @@ def train():
     print("\n" + "=" * 60)
     print(">>> ENTRENAMIENTO COMPLETADO")
     print("=" * 60)
+    print(f"   Arquitectura:          {arch.upper()}")
     print(f"   Epocas completadas:    {epoch + 1}")
     print(f"   Tiempo total:          {minutes}m {seconds}s")
     print(f"   Mejor Val Loss:        {best_val_loss:.4f}")

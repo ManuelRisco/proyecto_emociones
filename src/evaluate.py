@@ -42,28 +42,16 @@ from src.config import (
     EMOTION_LABELS, EMOTION_EMOJIS, NUM_CLASSES
 )
 from src.dataset import load_data
-from src.model import EmotionCNN
+from src.model import build_model
+from src.predict import load_model
 
 
 def load_trained_model():
     """
-    Carga el mejor modelo entrenado desde disco.
+    Carga el mejor modelo entrenado desde disco usando el loader inteligente.
     """
-    if not os.path.exists(BEST_MODEL_PATH):
-        raise FileNotFoundError(
-            f"\n[!] No se encontro el modelo entrenado: {BEST_MODEL_PATH}\n"
-            f"   Primero debes entrenar el modelo (opcion 1 del menu)."
-        )
+    return load_model(BEST_MODEL_PATH)
 
-    model = EmotionCNN().to(DEVICE)
-    checkpoint = torch.load(BEST_MODEL_PATH, map_location=DEVICE, weights_only=False)
-    model.load_state_dict(checkpoint["model_state_dict"])
-    model.eval()
-
-    print(f"   [OK] Modelo cargado (Epoca {checkpoint.get('epoch', '?')} | "
-          f"Val Acc: {checkpoint.get('val_acc', 0):.2f}%)")
-
-    return model
 
 
 def get_all_predictions(model, data_loader, device):

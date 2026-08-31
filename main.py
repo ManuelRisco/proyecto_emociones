@@ -1,25 +1,15 @@
 # ============================================================================
-# SCRIPT PRINCIPAL - MENU INTERACTIVO
-# Reconocimiento de Emociones Faciales con CNN
-# Autor: Manuel Fabrizzio Risco Gil
+# MENU PRINCIPAL DEL PROYECTO
+# Reconocimiento de Emociones Faciales
+# Autores: Manuel Fabrizzio Risco Gil y Alejandro Choquihuayta, Mario Julian
 # Curso: Sistemas Inteligentes y Machine Learning - Ciclo 9
-# ============================================================================
-# Este es el punto de entrada principal del proyecto.
-# Proporciona un menu interactivo con todas las funcionalidades:
-# 1. Entrenar modelo CNN
-# 2. Evaluar modelo entrenado
-# 3. Predecir emocion en imagen
-# 4. Demo en tiempo real con webcam
-# 5. Generar documento Word
-# 6. Salir
 # ============================================================================
 
 import os
 import sys
-import io
 import subprocess
 
-# Forzar UTF-8 en stdout/stderr para evitar errores de encoding en Windows
+# Forzar UTF-8 en stdout/stderr en Windows
 if sys.platform == "win32" and hasattr(sys.stdout, "reconfigure"):
     try:
         sys.stdout.reconfigure(encoding="utf-8", errors="replace")  # type: ignore[attr-defined]
@@ -27,7 +17,7 @@ if sys.platform == "win32" and hasattr(sys.stdout, "reconfigure"):
     except Exception:
         pass
 
-# Auto-reinicio transparente con .venv si se ejecuta con el Python global sin librerías
+# Auto-reinicio con .venv si se ejecuta desde Python global sin dependencias
 try:
     import torch
 except ImportError:
@@ -37,106 +27,96 @@ except ImportError:
         result = subprocess.run([venv_py] + sys.argv)
         sys.exit(result.returncode)
     else:
-        print("[!] Error: No se encontro el paquete 'torch' ni el entorno .venv.")
-        print(f"    Por favor ejecuta el script usando: {venv_py} main.py")
+        print("Error: No se encontro el paquete 'torch' ni el entorno .venv.")
         sys.exit(1)
 
-# Asegurar que el directorio raiz del proyecto este en el path
+# Añadir raíz al sys.path
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
 
 def print_banner():
-    """Muestra el banner del proyecto."""
-    banner = """
-+==============================================================+
-|                                                              |
-|     RECONOCIMIENTO DE EMOCIONES FACIALES CON CNN             |
-|                                                              |
-|     Red Neuronal Convolucional con Aceleracion GPU           |
-|                                                              |
-|     Autor: Manuel Fabrizzio Risco Gil                        |
-|     Curso: Sistemas Inteligentes y Machine Learning          |
-|     Ciclo: 9no                                               |
-|                                                              |
-+==============================================================+
-
-    [INPUT] ENTRADA       [CNN] PROCESO          [OUTPUT] SALIDA
-    ---------------      ----------------       ----------------
-    Imagen del     ->    La IA aprende y   ->   Emocion
-    rostro               procesa patrones       clasificada
-    (48x48 px)           automaticamente        + probabilidad
-    """
-    print(banner)
+    print("""
+=============================================================================
+  RECONOCIMIENTO DE EMOCIONES FACIALES CON REDES NEURONALES
+  Autores: Manuel Fabrizzio Risco Gil y Alejandro Choquihuayta
+  Curso: Sistemas Inteligentes y Machine Learning (Ciclo 9)
+=============================================================================
+""")
 
 
 def print_menu():
-    """Muestra el menu principal."""
-    print("\n" + "=" * 60)
-    print("  MENU PRINCIPAL")
-    print("=" * 60)
-    print("  1. [TRAIN]    Entrenar modelo CNN")
-    print("  2. [EVAL]     Evaluar modelo entrenado")
-    print("  3. [PREDICT]  Predecir emocion en imagen")
-    print("  4. [WEBCAM]   Demo en tiempo real (webcam)")
-    print("  5. [WORD]     Generar documento Word")
-    print("  6. [ARCH]     Ver arquitectura del modelo")
-    print("  7. [EXIT]     Salir")
-    print("=" * 60)
+    print("Opciones disponibles:")
+    print("  1. Entrenar modelo (ResNet-SE o CNN)")
+    print("  2. Evaluar modelo en conjunto de Test")
+    print("  3. Predecir emocion en una imagen")
+    print("  4. Iniciar reconocimiento en tiempo real (Webcam)")
+    print("  5. Generar documentos Word (Informe y Guia)")
+    print("  6. Exportar programa portable (.ZIP para cualquier PC)")
+    print("  7. Ver resumen de arquitectura del modelo")
+    print("  8. Salir")
+    print("-" * 65)
 
 
 def option_train():
-    """Ejecuta el entrenamiento del modelo."""
     from src.train import train
-    train()
+    print("\nSelecciona la arquitectura:")
+    print("  1. EmotionResNetSE (ResNet + SE Attention) [Recomendado]")
+    print("  2. EmotionCNN (CNN Clasica)")
+    sub_choice = input("Opcion (1-2) [default: 1]: ").strip()
+    arch = "resnet_se" if sub_choice in ("", "1") else "cnn_clasica"
+    train(arch=arch)
 
 
 def option_evaluate():
-    """Ejecuta la evaluacion del modelo."""
     from src.evaluate import evaluate
     evaluate()
 
 
 def option_predict():
-    """Ejecuta la prediccion en imagenes."""
     from src.predict import predict_interactive
     predict_interactive()
 
 
 def option_realtime():
-    """Ejecuta el demo en tiempo real."""
     from src.realtime import run_realtime
     run_realtime()
 
 
 def option_generate_word():
-    """Genera los documentos Word (Informe académico y Guía explicativa)."""
     from src.generate_document import generate_word_document
     from src.generate_complete_guide import generate_comprehensive_guide
-    print("\n  [1/2] Generando Informe Académico Formal...")
+    print("\nGenerando Informe Academico...")
     generate_word_document()
-    print("\n  [2/2] Generando Guía Explicativa Completa...")
+    print("Generando Guia de Estudio...")
     generate_comprehensive_guide()
 
 
+def option_export():
+    from src.export import create_portable_bundle
+    create_portable_bundle()
+
+
 def option_show_architecture():
-    """Muestra la arquitectura del modelo."""
-    from src.model import EmotionCNN, get_model_summary
+    from src.model import EmotionResNetSE, EmotionCNN, get_model_summary
     from src.config import DEVICE
-    model = EmotionCNN().to(DEVICE)
-    get_model_summary(model)
+    print("\n--- EmotionResNetSE ---")
+    model_se = EmotionResNetSE().to(DEVICE)
+    get_model_summary(model_se)
+    print("\n--- EmotionCNN ---")
+    model_cnn = EmotionCNN().to(DEVICE)
+    get_model_summary(model_cnn)
 
 
 def main():
-    """Funcion principal del programa."""
     print_banner()
 
     while True:
         print_menu()
 
         try:
-            choice = input("\n  Selecciona una opcion (1-7): ").strip()
+            choice = input("Selecciona una opcion (1-8): ").strip()
         except (KeyboardInterrupt, EOFError):
-            print("\n\n  Hasta luego!")
+            print("\nPrograma finalizado.")
             break
 
         if choice == "1":
@@ -150,14 +130,21 @@ def main():
         elif choice == "5":
             option_generate_word()
         elif choice == "6":
-            option_show_architecture()
+            option_export()
         elif choice == "7":
-            print("\n  Hasta luego!")
+            option_show_architecture()
+        elif choice == "8":
+            print("Programa finalizado.")
             break
         else:
-            print("\n  [!] Opcion no valida. Intenta de nuevo.")
+            print("Opcion invalida. Intenta nuevamente.")
 
-        input("\n  Presiona ENTER para continuar...")
+        try:
+            input("\nPresiona ENTER para continuar...")
+            print()
+        except (KeyboardInterrupt, EOFError):
+            print("\nPrograma finalizado.")
+            break
 
 
 if __name__ == "__main__":

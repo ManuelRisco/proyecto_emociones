@@ -49,3 +49,6 @@ desktop.ini
 
 # Logs
 *.log
+
+# Modelos de PyTorch demasiado pesados
+outputs/models/*.pth
