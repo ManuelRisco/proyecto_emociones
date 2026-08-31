@@ -17,14 +17,12 @@ import time
 import json
 
 # Forzar UTF-8 en Windows para evitar errores de encoding
-if sys.platform == "win32":
-    for stream in (sys.stdout, sys.stderr):
-        reconfig = getattr(stream, "reconfigure", None)
-        if callable(reconfig):
-            try:
-                reconfig(encoding="utf-8", errors="replace")
-            except Exception:
-                pass
+if sys.platform == "win32" and hasattr(sys.stdout, "reconfigure"):
+    try:
+        sys.stdout.reconfigure(encoding="utf-8", errors="replace")  # type: ignore[attr-defined]
+        sys.stderr.reconfigure(encoding="utf-8", errors="replace")  # type: ignore[attr-defined]
+    except Exception:
+        pass
 
 import torch
 import torch.nn as nn

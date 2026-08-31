@@ -20,14 +20,12 @@ from torch.utils.data import Dataset, DataLoader
 from torchvision import transforms
 
 # Forzar UTF-8 en Windows
-if sys.platform == "win32":
-    for stream in (sys.stdout, sys.stderr):
-        reconfig = getattr(stream, "reconfigure", None)
-        if callable(reconfig):
-            try:
-                reconfig(encoding="utf-8", errors="replace")
-            except Exception:
-                pass
+if sys.platform == "win32" and hasattr(sys.stdout, "reconfigure"):
+    try:
+        sys.stdout.reconfigure(encoding="utf-8", errors="replace")  # type: ignore[attr-defined]
+        sys.stderr.reconfigure(encoding="utf-8", errors="replace")  # type: ignore[attr-defined]
+    except Exception:
+        pass
 
 # Asegurar que el directorio raiz del proyecto este en sys.path
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
