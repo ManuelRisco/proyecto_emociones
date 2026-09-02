@@ -111,3 +111,23 @@ YUNET_NMS_THRESHOLD   = 0.3
 SMOOTHING_ALPHA      = 0.30
 BBOX_SMOOTHING_ALPHA = 0.35
 TRACKING_IOU_THRESHOLD = 0.30
+
+# ── Filtro de Precisión por Situación (Anti-Confusión Neutral↔Enojado) ────────
+# Umbral mínimo de confianza que debe superar una emoción para mostrarse como
+# dominante. Si no alcanza el umbral, se usa la segunda emoción más probable.
+# Esto evita que "concentración/comiendo/leyendo" se confunda con "Enojado".
+EMOTION_CONFIDENCE_THRESHOLDS = {
+    0: 0.55,   # Enojado    — requiere 55% de confianza (era la que más se confundía)
+    1: 0.45,   # Disgusto   — umbral moderado
+    2: 0.45,   # Miedo      — umbral moderado
+    3: 0.35,   # Feliz      — umbral bajo (muy distintiva)
+    4: 0.42,   # Triste     — umbral moderado
+    5: 0.38,   # Sorprendido — umbral bajo (muy distintiva)
+    6: 0.30,   # Neutral    — umbral muy bajo (catch-all para estados ambiguos)
+}
+
+# Frames consecutivos que debe mantenerse una nueva emoción antes de cambiarla
+# en el HUD (evita saltos instantáneos entre emociones similares).
+# Un valor de 6 ≈ 0.1 segundos a 60 FPS, suficiente para filtrar microexpresiones
+# sin añadir lag perceptible.
+EMOTION_DEBOUNCE_FRAMES = 6

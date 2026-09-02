@@ -77,32 +77,91 @@ def export_onnx(model_path: str = BEST_MODEL_PATH, output_dir: str = MODELS_DIR)
 
 _BAT_CONTENT = '''\
 @echo off
-setlocal
+setlocal enabledelayedexpansion
 cd /d "%~dp0"
 title Reconocimiento de Emociones Faciales
 
 echo ============================================================
-echo   RECONOCIMIENTO DE EMOCIONES FACIALES (PORTABLE)
+echo   RECONOCIMIENTO DE EMOCIONES FACIALES (PORTABLE v2.0)
 echo   Autores: Manuel Fabrizzio Risco Gil y Alejandro Choquihuayta
 echo ============================================================
 echo.
 
-where python >nul 2>&1
-if errorlevel 1 (
-    echo [!] Python no encontrado. Descargalo en: https://www.python.org/
-    echo     Marca "Add python.exe to PATH" al instalar.
-    pause & exit /b 1
+:: ── Buscar Python válido (evita el alias falso de Microsoft Store) ──
+set PYTHON=
+
+:: 1. Intentar con el lanzador "py" de Windows (el más confiable)
+where py >nul 2>&1
+if not errorlevel 1 (
+    py -c "import sys; exit(0 if sys.version_info>=(3,8) else 1)" >nul 2>&1
+    if not errorlevel 1 (
+        set PYTHON=py
+        goto :found_python
+    )
 )
 
-python -c "import cv2, numpy" >nul 2>&1
+:: 2. Intentar con "python" pero verificar que NO sea el alias de la Store
+where python >nul 2>&1
+if not errorlevel 1 (
+    python -c "import sys; exit(0 if sys.version_info>=(3,8) else 1)" >nul 2>&1
+    if not errorlevel 1 (
+        set PYTHON=python
+        goto :found_python
+    )
+)
+
+:: 3. Buscar en rutas comunes de instalación
+for /d %%D in ("%LOCALAPPDATA%\\Programs\\Python\\Python3*") do (
+    if exist "%%D\\python.exe" (
+        "%%D\\python.exe" -c "import sys; exit(0)" >nul 2>&1
+        if not errorlevel 1 (
+            set PYTHON="%%D\\python.exe"
+            goto :found_python
+        )
+    )
+)
+for /d %%D in ("C:\\Python3*") do (
+    if exist "%%D\\python.exe" (
+        "%%D\\python.exe" -c "import sys; exit(0)" >nul 2>&1
+        if not errorlevel 1 (
+            set PYTHON="%%D\\python.exe"
+            goto :found_python
+        )
+    )
+)
+
+:: 4. No se encontró Python válido
+echo [!] Python 3.8+ no encontrado en esta computadora.
+echo.
+echo     Opciones para instalarlo:
+echo       A) Descargalo en: https://www.python.org/downloads/
+echo          * Marca "Add python.exe to PATH" al instalar.
+echo       B) Si estas en una PC institucional sin permisos de admin,
+echo          usa la version portable de Python (no requiere instalacion):
+echo          https://www.python.org/ftp/python/3.11.9/python-3.11.9-embed-amd64.zip
+echo.
+echo     Luego vuelve a ejecutar este archivo.
+pause & exit /b 1
+
+:found_python
+echo [OK] Python encontrado: %PYTHON%
+
+:: ── Verificar / instalar dependencias ──
+%PYTHON% -c "import cv2, numpy" >nul 2>&1
 if errorlevel 1 (
-    echo [*] Instalando dependencias OpenCV y NumPy...
-    python -m pip install -r requirements_portable.txt
-    if errorlevel 1 ( echo [!] Error instalando. Verifica tu internet. & pause & exit /b 1 )
+    echo [*] Instalando OpenCV y NumPy ^(solo la primera vez^)...
+    %PYTHON% -m pip install --user -r requirements_portable.txt
+    if errorlevel 1 (
+        echo.
+        echo [!] No se pudieron instalar las dependencias automaticamente.
+        echo     Intenta ejecutar esto manualmente en una terminal:
+        echo       %PYTHON% -m pip install opencv-python numpy
+        pause & exit /b 1
+    )
 )
 
 echo [*] Iniciando camara web...
-python app_portable.py
+%PYTHON% app_portable.py
 pause
 '''
 

@@ -37,9 +37,25 @@ EMOTIONS = {
 }
 
 
+# Umbral m\u00ednimo de confianza para mostrar una emoci\u00f3n.
+# Si no se supera, se usa la segunda m\u00e1s probable.
+# Evita que "cara seria/comiendo" se muestre como "Enojado".
+CONF_THRESHOLDS = {
+    0: 0.55,   # Enojado      — umbral alto (muy confundible con Neutral/serio)
+    1: 0.45,   # Disgusto
+    2: 0.45,   # Miedo
+    3: 0.35,   # Feliz        — muy distintiva, umbral bajo
+    4: 0.42,   # Triste
+    5: 0.38,   # Sorprendido  — muy distintiva, umbral bajo
+    6: 0.30,   # Neutral      — catch-all para estados ambiguos
+}
+DEBOUNCE_FRAMES = 6  # frames consecutivos antes de cambiar la emoci\u00f3n mostrada
+
+
 class PortableEmotionTracker:
-    def __init__(self, alpha=0.30):
+    def __init__(self, alpha=0.30, conf_thresholds=None):
         self.alpha = alpha
+        self.conf_thresholds = dict(conf_thresholds or CONF_THRESHOLDS)
         self.tracks = {}
         self.next_id = 1
 
@@ -77,12 +93,16 @@ class PortableEmotionTracker:
                     t["probs"] = d["probs"].copy()
                 t["landmarks"] = d.get("landmarks")
             else:
+                init_idx = int(np.argmax(d["probs"]))
                 self.tracks[self.next_id] = {
                     "id": self.next_id,
                     "bbox": d["bbox"],
                     "probs": d["probs"].copy(),
                     "lost": 0,
-                    "landmarks": d.get("landmarks")
+                    "landmarks": d.get("landmarks"),
+                    "display_idx": init_idx,
+                    "candidate_idx": init_idx,
+                    "candidate_count": 0,
                 }
                 matched.add(self.next_id)
                 self.next_id += 1
@@ -96,17 +116,49 @@ class PortableEmotionTracker:
 
         res = []
         for tid, t in self.tracks.items():
-            if t["lost"] == 0:
-                p_idx = int(np.argmax(t["probs"]))
-                res.append({
-                    "id": tid,
-                    "bbox": t["bbox"],
-                    "probs": t["probs"],
-                    "pred_idx": p_idx,
-                    "label": EMOTIONS[p_idx]["name"],
-                    "conf": float(t["probs"][p_idx]) * 100.0,
-                    "landmarks": t["landmarks"]
-                })
+            if t["lost"] != 0:
+                continue
+
+            probs = t["probs"]
+            raw_best = int(np.argmax(probs))
+
+            # 1. Umbral de confianza: si no supera el m\u00ednimo, usar la siguiente
+            if float(probs[raw_best]) >= self.conf_thresholds.get(raw_best, 0.0):
+                resolved = raw_best
+            else:
+                sorted_idxs = np.argsort(probs)[::-1]
+                resolved = int(sorted_idxs[0])
+                for cand in sorted_idxs[1:]:
+                    if float(probs[cand]) >= self.conf_thresholds.get(int(cand), 0.0):
+                        resolved = int(cand)
+                        break
+
+            # 2. Debounce: cambiar emoci\u00f3n visible solo si persiste DEBOUNCE_FRAMES
+            disp = t.get("display_idx", resolved)
+            if resolved != disp:
+                if resolved == t.get("candidate_idx"):
+                    t["candidate_count"] = t.get("candidate_count", 0) + 1
+                else:
+                    t["candidate_idx"] = resolved
+                    t["candidate_count"] = 1
+                if t["candidate_count"] >= DEBOUNCE_FRAMES:
+                    t["display_idx"] = resolved
+                    t["candidate_count"] = 0
+            else:
+                t["candidate_idx"] = resolved
+                t["candidate_count"] = 0
+                t["display_idx"] = resolved
+
+            disp_idx = t.get("display_idx", resolved)
+            res.append({
+                "id": tid,
+                "bbox": t["bbox"],
+                "probs": probs,
+                "pred_idx": disp_idx,
+                "label": EMOTIONS[disp_idx]["name"],
+                "conf": float(probs[disp_idx]) * 100.0,
+                "landmarks": t["landmarks"]
+            })
         return res
 
 

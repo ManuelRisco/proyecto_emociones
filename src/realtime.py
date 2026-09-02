@@ -26,6 +26,7 @@ from src.config import (
     BEST_MODEL_PATH, BBOX_SMOOTHING_ALPHA, DEVICE, EMOTION_COLORS,
     EMOTION_LABELS, IMG_SIZE, NUM_CLASSES, PLOTS_DIR,
     SMOOTHING_ALPHA, TRACKING_IOU_THRESHOLD, USE_AMP,
+    EMOTION_CONFIDENCE_THRESHOLDS, EMOTION_DEBOUNCE_FRAMES,
 )
 from src.predict import FaceDetector, load_model, preprocess_face
 
@@ -63,10 +64,15 @@ class FaceTracker:
         alpha: float = SMOOTHING_ALPHA,
         bbox_alpha: float = BBOX_SMOOTHING_ALPHA,
         max_lost: int = 8,
+        debounce_frames: int = EMOTION_DEBOUNCE_FRAMES,
+        conf_thresholds: dict | None = None,
     ):
-        self.alpha      = alpha
-        self.bbox_alpha = bbox_alpha
-        self.max_lost   = max_lost
+        self.alpha           = alpha
+        self.bbox_alpha      = bbox_alpha
+        self.max_lost        = max_lost
+        self.debounce_frames = debounce_frames
+        # Copia mutable para ajuste en tiempo real sin tocar el config global
+        self.conf_thresholds = dict(conf_thresholds or EMOTION_CONFIDENCE_THRESHOLDS)
         self.tracks: dict[int, dict] = {}
         self.next_id = 1
 
@@ -124,13 +130,18 @@ class FaceTracker:
         # Nuevos tracks para detecciones no asociadas
         for d_idx, det in enumerate(detections):
             if d_idx not in matched_dets:
+                raw = det["raw_probs"]
+                init_idx = int(np.argmax(raw))
                 self.tracks[self.next_id] = {
-                    "id":          self.next_id,
-                    "bbox":        det["bbox"],
-                    "probs":       det["raw_probs"].copy(),
-                    "lost_frames": 0,
-                    "landmarks":   det.get("landmarks"),
-                    "confidence":  det.get("confidence", 1.0),
+                    "id":              self.next_id,
+                    "bbox":            det["bbox"],
+                    "probs":           raw.copy(),
+                    "lost_frames":     0,
+                    "landmarks":       det.get("landmarks"),
+                    "confidence":      det.get("confidence", 1.0),
+                    "display_idx":     init_idx,    # emoción actualmente visible
+                    "candidate_idx":   init_idx,    # emoción candidata a mostrar
+                    "candidate_count": 0,           # frames consecutivos como candidata
                 }
                 matched_tracks.add(self.next_id)
                 self.next_id += 1
@@ -143,21 +154,58 @@ class FaceTracker:
             if tk["lost_frames"] <= self.max_lost
         }
 
-        # Retornar solo tracks activos (vistos en este frame)
-        return [
-            {
+        # Retornar solo tracks activos con lógica de debounce + umbral de confianza
+        result = []
+        for tid, tk in self.tracks.items():
+            if tk["lost_frames"] != 0:
+                continue
+
+            probs = tk["probs"]
+            raw_best_idx = int(np.argmax(probs))
+
+            # ── 1. Umbral de confianza por emoción ─────────────────────────────
+            # Si la emoción más probable no supera su umbral mínimo, se busca
+            # la siguiente emoción más probable que sí lo cumpla.
+            threshold = self.conf_thresholds.get(raw_best_idx, 0.0)
+            if float(probs[raw_best_idx]) >= threshold:
+                resolved_idx = raw_best_idx
+            else:
+                # Ordenar por probabilidad y tomar la primera que pase su umbral
+                sorted_idxs = np.argsort(probs)[::-1]
+                resolved_idx = int(sorted_idxs[0])  # fallback
+                for candidate in sorted_idxs[1:]:
+                    if float(probs[candidate]) >= self.conf_thresholds.get(int(candidate), 0.0):
+                        resolved_idx = int(candidate)
+                        break
+
+            # ── 2. Debounce: solo cambia emoción mostrada si persiste N frames ─
+            if resolved_idx != tk["display_idx"]:
+                if resolved_idx == tk.get("candidate_idx"):
+                    tk["candidate_count"] = tk.get("candidate_count", 0) + 1
+                else:
+                    tk["candidate_idx"]   = resolved_idx
+                    tk["candidate_count"] = 1
+
+                if tk["candidate_count"] >= self.debounce_frames:
+                    tk["display_idx"]     = resolved_idx
+                    tk["candidate_count"] = 0
+            else:
+                tk["candidate_idx"]   = resolved_idx
+                tk["candidate_count"] = 0
+
+            display_idx = tk["display_idx"]
+            result.append({
                 "id":             tk["id"],
                 "bbox":           tk["bbox"],
-                "probs":          tk["probs"],
-                "pred_idx":       int(np.argmax(tk["probs"])),
-                "pred_label":     EMOTION_LABELS[int(np.argmax(tk["probs"]))],
-                "confidence":     float(tk["probs"][int(np.argmax(tk["probs"]))]) * 100,
+                "probs":          probs,
+                "pred_idx":       display_idx,
+                "raw_pred_idx":   raw_best_idx,   # para debug
+                "pred_label":     EMOTION_LABELS[display_idx],
+                "confidence":     float(probs[display_idx]) * 100,
                 "landmarks":      tk["landmarks"],
                 "det_confidence": tk["confidence"] * 100,
-            }
-            for tid, tk in self.tracks.items()
-            if tk["lost_frames"] == 0
-        ]
+            })
+        return result
 
 
 # ──────────────────────────────────────────────────────────────────────────────
@@ -258,15 +306,16 @@ def _draw_hud_header(
         cv2.putText(frame, "[PAUSADO]", (w // 2 - 45, h // 2), font, 0.9, (0, 0, 255), 2, cv2.LINE_AA)
 
 
-def _draw_hud_footer(frame: np.ndarray) -> None:
-    """Barra inferior con atajos de teclado."""
+def _draw_hud_footer(frame: np.ndarray, angry_threshold: float = 0.55) -> None:
+    """Barra inferior con atajos de teclado y umbral actual de Enojado."""
     h, w = frame.shape[:2]
     overlay = frame.copy()
     cv2.rectangle(overlay, (0, h - 24), (w, h), (15, 15, 15), -1)
     cv2.addWeighted(overlay, 0.85, frame, 0.15, 0, frame)
     cv2.putText(
-        frame, "q:Salir | t:EMA | l:Landmarks | s:Foto | p:Pausa | c:Camara",
-        (14, h - 7), cv2.FONT_HERSHEY_SIMPLEX, 0.36, (200, 200, 200), 1, cv2.LINE_AA,
+        frame,
+        f"q:Salir | t:EMA | l:Lmrk | s:Foto | p:Pausa | c:Cam | +/-:Umbral Enojado({angry_threshold:.0%})",
+        (14, h - 7), cv2.FONT_HERSHEY_SIMPLEX, 0.33, (200, 200, 200), 1, cv2.LINE_AA,
     )
 
 
@@ -297,7 +346,11 @@ def run_realtime() -> None:
 
     print("   [2/3] Inicializando detector neuronal YuNet...")
     detector = FaceDetector()
-    tracker  = FaceTracker(alpha=SMOOTHING_ALPHA, bbox_alpha=BBOX_SMOOTHING_ALPHA)
+    tracker  = FaceTracker(
+        alpha=SMOOTHING_ALPHA,
+        bbox_alpha=BBOX_SMOOTHING_ALPHA,
+        debounce_frames=EMOTION_DEBOUNCE_FRAMES,
+    )
 
     print("   [3/3] Buscando cámara web activa...")
     cap, current_cam_idx = open_camera()
@@ -324,7 +377,7 @@ def run_realtime() -> None:
     show_landmarks = True
     paused         = False
     frame_count    = 0
-    fps            = 60.0
+    fps            = 30.0   
     latency_ms     = 0.0
     is_cuda        = DEVICE.type == "cuda"
     prev_time      = time.time()
@@ -402,7 +455,7 @@ def run_realtime() -> None:
         prev_time = curr_time
 
         _draw_hud_header(frame, fps, latency_ms, use_smoothing, is_cuda, paused)
-        _draw_hud_footer(frame)
+        _draw_hud_footer(frame, angry_threshold=tracker.conf_thresholds[0])
 
         cv2.imshow(WINDOW_NAME, frame)
 
@@ -417,6 +470,14 @@ def run_realtime() -> None:
         elif key == ord("l"):
             show_landmarks = not show_landmarks
             print(f"   [LANDMARKS] {'VISIBLES' if show_landmarks else 'OCULTOS'}")
+        elif key in (ord("+"), ord("=")):
+            # Subir umbral de Enojado → más estricto (menos falsos Enojados)
+            tracker.conf_thresholds[0] = min(0.95, tracker.conf_thresholds[0] + 0.05)
+            print(f"   [UMBRAL Enojado] → {tracker.conf_thresholds[0]:.0%}")
+        elif key == ord("-"):
+            # Bajar umbral de Enojado → más sensible (detecta anger leve)
+            tracker.conf_thresholds[0] = max(0.10, tracker.conf_thresholds[0] - 0.05)
+            print(f"   [UMBRAL Enojado] → {tracker.conf_thresholds[0]:.0%}")
         elif key == ord("s"):
             os.makedirs(PLOTS_DIR, exist_ok=True)
             path = os.path.join(PLOTS_DIR, f"screenshot_{frame_count}.png")
