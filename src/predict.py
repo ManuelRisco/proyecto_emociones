@@ -4,7 +4,7 @@
 # ============================================================================
 # Funcionalidades:
 #   1. load_model():         Carga automática del checkpoint (detección de arch)
-#   2. FaceDetector:         YuNet DNN (multi-ángulo) con fallback a Haar Cascade
+#   2. FaceDetector:         YuNet ONNX (multi-ángulo, 5 landmarks faciales)
 #   3. preprocess_face():    Preprocesamiento con transform cacheado (sin overhead)
 #   4. predict_single_image(): Predicción completa con visualización
 #   5. predict_interactive(): Modo consola interactivo
@@ -245,7 +245,7 @@ def predict_single_image(
         return None
 
     model    = model    or load_model()
-    detector = detector or FaceDetector(mode="yunet")
+    detector = detector or FaceDetector()
 
     img = cv2.imread(image_path)
     if img is None:
@@ -257,7 +257,7 @@ def predict_single_image(
         print("\n[!] Sin rostros detectados. Procesando imagen completa...")
         detections = [{"bbox": (0, 0, img.shape[1], img.shape[0]), "confidence": 1.0, "landmarks": None}]
     else:
-        print(f"\n   Rostros detectados ({detector.mode.upper()}): {len(detections)}")
+        print(f"\n   Rostros detectados (YuNet): {len(detections)}")
 
     gray    = cv2.cvtColor(img, cv2.COLOR_BGR2GRAY)
     results = []
@@ -353,7 +353,7 @@ def predict_interactive() -> None:
     print("   Cargando modelo y detector neuronal...")
 
     model    = load_model()
-    detector = FaceDetector(mode="yunet")
+    detector = FaceDetector()
 
     while True:
         print("\n" + "─" * 60)
