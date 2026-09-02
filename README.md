@@ -81,18 +81,20 @@ proyecto_emociones/
 │   ├── models/                 # Checkpoints del modelo (.pth)
 │   │   ├── mejor_modelo_emociones.pth
 │   │   └── ultimo_modelo_emociones.pth
-│   ├── plots/                  # Gráficas de métricas y matrices de confusión
-│   └── Actividad_CNN_...docx   # Reporte formal generado en Word
+│   └── plots/                  # Gráficas de métricas y matrices de confusión
+├── scripts/
+│   └── docs/                   # Generadores automatizados de informes en .docx
 ├── src/
 │   ├── __init__.py
+│   ├── utils.py                # Utilidades compartidas (cámara, transforms, UTF-8)
 │   ├── config.py               # Hiperparámetros, rutas y configuración CUDA/AMP
-│   ├── dataset.py              # Carga de datos, DataLoaders y Data Augmentation
+│   ├── dataset.py              # Carga directa en VRAM, oversampling y data augmentation GPU
 │   ├── evaluate.py             # Métricas (Accuracy, Precision, Recall, F1) y Confusion Matrix
-│   ├── generate_document.py    # Generador automatizado de informes en .docx
-│   ├── model.py                # Arquitectura PyTorch de la EmotionCNN
-│   ├── predict.py              # Inferencia sobre imágenes estáticas
-│   ├── realtime.py             # Detección en vivo con Webcam y OpenCV (Haar Cascades)
-│   └── train.py                # Bucle de entrenamiento con Early Stopping y optimizador
+│   ├── model.py                # Arquitectura EmotionResNetSE con atención por canales
+│   ├── predict.py              # Detector facial neuronal YuNet e inferencia
+│   ├── realtime.py             # Detección en tiempo real con Webcam (YuNet + EMA Tracker)
+│   ├── app_portable.py         # Aplicación ejecutable standalone portátil
+│   └── train.py                # Bucle de entrenamiento con Focal Loss, Warmup y AMP
 ├── main.py                     # Menú interactivo por consola
 ├── requirements.txt            # Dependencias del proyecto
 ├── pyproject.toml              # Configuración del paquete
@@ -104,10 +106,9 @@ proyecto_emociones/
 ## ⚙️ 6. Módulos y Componentes Clave
 
 * **`main.py`**: Orquestador principal con menú interactivo en consola para ejecutar cualquier funcionalidad en 1 clic.
-* **`src/train.py`**: Entrenamiento con optimizador `AdamW`, función de pérdida `CrossEntropyLoss`, planificador `ReduceLROnPlateau`, `Early Stopping` por paciencia de épocas y `Automatic Mixed Precision (AMP)` para aceleración en GPUs RTX.
-* **`src/evaluate.py`**: Evaluación sobre el conjunto de test, generando el reporte de clasificación de Scikit-Learn y gráficas con Seaborn/Matplotlib.
-* **`src/realtime.py`**: Captura de video en tiempo real mediante OpenCV, detección del rostro mediante clasificador en cascada de Haar (`haarcascade_frontalface_default.xml`), recorte dinámico, preprocesamiento e inferencia inmediata con la CNN.
-* **`src/generate_document.py`**: Script que genera automáticamente un documento formal `.docx` listo para entrega académica, incluyendo marco teórico, fórmulas, parámetros y gráficas resultantes.
+* **`src/train.py`**: Entrenamiento con optimizador `AdamW`, función de pérdida `FocalLoss`, planificador `SequentialLR (Warmup + CosineAnnealing)`, `Early Stopping` y `Automatic Mixed Precision (AMP)` para aceleración en GPUs RTX.
+* **`src/evaluate.py`**: Evaluación sobre el conjunto de test, generando el reporte de clasificación (Precision, Recall, F1-score) y gráficas con Seaborn/Matplotlib.
+* **`src/realtime.py`**: Captura de video en tiempo real mediante OpenCV, detección neuronal del rostro con **YuNet ONNX**, seguimiento temporal con **EMA (Exponential Moving Average)** y clasificación de emociones con la CNN.
 
 ---
 

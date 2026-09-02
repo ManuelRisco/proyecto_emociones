@@ -4,21 +4,26 @@
 # ============================================================================
 
 import os
+import sys
 import torch
 
-# Rutas del proyecto
-BASE_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-DATA_DIR = os.path.join(BASE_DIR, "data")
+# ── Rutas del proyecto ────────────────────────────────────────────────────────
+BASE_DIR  = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+DATA_DIR  = os.path.join(BASE_DIR, "data")
 TRAIN_DIR = os.path.join(DATA_DIR, "train")
-TEST_DIR = os.path.join(DATA_DIR, "test")
-OUTPUT_DIR = os.path.join(BASE_DIR, "outputs")
-MODELS_DIR = os.path.join(OUTPUT_DIR, "models")
-PLOTS_DIR = os.path.join(OUTPUT_DIR, "plots")
+TEST_DIR  = os.path.join(DATA_DIR, "test")
+OUTPUT_DIR  = os.path.join(BASE_DIR, "outputs")
+MODELS_DIR  = os.path.join(OUTPUT_DIR, "models")
+PLOTS_DIR   = os.path.join(OUTPUT_DIR, "plots")
+LOGS_DIR    = os.path.join(OUTPUT_DIR, "logs")
 
-for directory in [DATA_DIR, TRAIN_DIR, TEST_DIR, OUTPUT_DIR, MODELS_DIR, PLOTS_DIR]:
-    os.makedirs(directory, exist_ok=True)
+for _dir in [DATA_DIR, TRAIN_DIR, TEST_DIR, OUTPUT_DIR, MODELS_DIR, PLOTS_DIR, LOGS_DIR]:
+    os.makedirs(_dir, exist_ok=True)
 
-# Mapeo de clases y etiquetas
+# Dataset CSV (alternativa a carpetas train/test)
+FER2013_CSV_PATH = os.path.join(DATA_DIR, "fer2013.csv")
+
+# ── Emociones ─────────────────────────────────────────────────────────────────
 EMOTION_LABELS = {
     0: "Enojado",
     1: "Disgusto",
@@ -26,7 +31,7 @@ EMOTION_LABELS = {
     3: "Feliz",
     4: "Triste",
     5: "Sorprendido",
-    6: "Neutral"
+    6: "Neutral",
 }
 
 EMOTION_LABELS_EN = {
@@ -36,7 +41,7 @@ EMOTION_LABELS_EN = {
     3: "Happy",
     4: "Sad",
     5: "Surprise",
-    6: "Neutral"
+    6: "Neutral",
 }
 
 EMOTION_EMOJIS = {
@@ -46,9 +51,10 @@ EMOTION_EMOJIS = {
     3: "😄",
     4: "😢",
     5: "😲",
-    6: "😐"
+    6: "😐",
 }
 
+# Colores BGR para cada emoción (OpenCV)
 EMOTION_COLORS = {
     0: (40, 40, 235),
     1: (34, 139, 34),
@@ -56,46 +62,52 @@ EMOTION_COLORS = {
     3: (0, 215, 255),
     4: (235, 120, 40),
     5: (0, 140, 255),
-    6: (170, 170, 170)
+    6: (170, 170, 170),
 }
-
-COLORS = EMOTION_COLORS
 
 NUM_CLASSES = len(EMOTION_LABELS)
 
-# Parámetros de imagen y entrenamiento
-IMG_SIZE = 48
-BATCH_SIZE = 128
-LEARNING_RATE = 0.001
-NUM_EPOCHS = 50
-WEIGHT_DECAY = 1e-4
-NUM_WORKERS = 0
-USE_AMP = True
-LOAD_TO_VRAM = True
-EARLY_STOPPING_PATIENCE = 10
+# ── Imagen y entrenamiento ────────────────────────────────────────────────────
+IMG_SIZE  = 48
+BATCH_SIZE = 256              # RTX 5060 Ti (8 GB VRAM): batch 256 con uint8 ocupa ~57 MB → OK
+LEARNING_RATE  = 0.0005       # 0.001 causaba oscilación en val_loss (épocas 6-22)
+NUM_EPOCHS     = 100          # El modelo seguía mejorando en época 49 → más margen
+WEIGHT_DECAY   = 1e-4
+NUM_WORKERS    = 0            # 0 = sin workers CPU (toda la data ya está en VRAM)
+WARMUP_EPOCHS  = 8            # Warmup más gradual con LR menor
+EARLY_STOPPING_PATIENCE = 15  # Más paciencia: la mejora final es lenta
+MIXUP_ALPHA    = 0.1          # Reducido de 0.2 → menos dilución para clases minoritarias
+MIN_SAMPLES_PER_CLASS = 2000  # Oversampling: clases con < 2000 imgs se repiten hasta este mínimo
 
-# Dispositivo
-def get_device():
+# ── Flags de optimización ─────────────────────────────────────────────────────
+USE_AMP           = True   # Automatic Mixed Precision (FP16 Tensor Cores)
+LOAD_TO_VRAM      = True   # Cargar todo el dataset en VRAM al inicio
+# torch.compile() requiere Triton, que solo está disponible en Linux.
+# En Windows se desactiva automáticamente para evitar TritonMissing.
+USE_TORCH_COMPILE = sys.platform != "win32"
+USE_MIXUP         = True   # Mixup augmentation (alpha=0.2) durante entrenamiento
+
+# ── Dispositivo ───────────────────────────────────────────────────────────────
+def get_device() -> torch.device:
     if torch.cuda.is_available():
         torch.backends.cudnn.benchmark = True
+        torch.backends.cudnn.deterministic = False  # más velocidad en benchmark mode
         return torch.device("cuda")
     return torch.device("cpu")
 
 DEVICE = get_device()
 
-# Rutas de modelos
-BEST_MODEL_PATH = os.path.join(MODELS_DIR, "mejor_modelo_emociones.pth")
-LAST_MODEL_PATH = os.path.join(MODELS_DIR, "ultimo_modelo_emociones.pth")
+# ── Rutas de modelos ──────────────────────────────────────────────────────────
+BEST_MODEL_PATH      = os.path.join(MODELS_DIR, "mejor_modelo_emociones.pth")
+LAST_MODEL_PATH      = os.path.join(MODELS_DIR, "ultimo_modelo_emociones.pth")
 DEFAULT_ARCHITECTURE = "resnet_se"
 
-# Detección facial
-YUNET_MODEL_PATH = os.path.join(DATA_DIR, "face_detection_yunet_2023mar.onnx")
+# ── Detección facial ──────────────────────────────────────────────────────────
+YUNET_MODEL_PATH      = os.path.join(DATA_DIR, "face_detection_yunet_2023mar.onnx")
 YUNET_SCORE_THRESHOLD = 0.65
-YUNET_NMS_THRESHOLD = 0.3
+YUNET_NMS_THRESHOLD   = 0.3
 
-HAAR_CASCADE_PATH = os.path.join(DATA_DIR, "haarcascade_frontalface_default.xml")
-
-# Suavizado temporal
-SMOOTHING_ALPHA = 0.30
+# ── Suavizado temporal (tiempo real) ──────────────────────────────────────────
+SMOOTHING_ALPHA      = 0.30
 BBOX_SMOOTHING_ALPHA = 0.35
 TRACKING_IOU_THRESHOLD = 0.30

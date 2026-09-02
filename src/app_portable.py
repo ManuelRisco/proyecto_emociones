@@ -43,7 +43,7 @@ class PortableEmotionTracker:
         self.tracks = {}
         self.next_id = 1
 
-    def update(self, detections):
+    def update(self, detections, use_smoothing=True):
         matched = set()
         for d in detections:
             x, y, w, h = d["bbox"]
@@ -64,13 +64,17 @@ class PortableEmotionTracker:
                 matched.add(best_tid)
                 t = self.tracks[best_tid]
                 t["lost"] = 0
-                t["bbox"] = (
-                    int(0.35 * x + 0.65 * t["bbox"][0]),
-                    int(0.35 * y + 0.65 * t["bbox"][1]),
-                    int(0.35 * w + 0.65 * t["bbox"][2]),
-                    int(0.35 * h + 0.65 * t["bbox"][3])
-                )
-                t["probs"] = self.alpha * d["probs"] + (1.0 - self.alpha) * t["probs"]
+                if use_smoothing:
+                    t["bbox"] = (
+                        int(0.35 * x + 0.65 * t["bbox"][0]),
+                        int(0.35 * y + 0.65 * t["bbox"][1]),
+                        int(0.35 * w + 0.65 * t["bbox"][2]),
+                        int(0.35 * h + 0.65 * t["bbox"][3])
+                    )
+                    t["probs"] = self.alpha * d["probs"] + (1.0 - self.alpha) * t["probs"]
+                else:
+                    t["bbox"] = d["bbox"]
+                    t["probs"] = d["probs"].copy()
                 t["landmarks"] = d.get("landmarks")
             else:
                 self.tracks[self.next_id] = {
@@ -106,9 +110,20 @@ class PortableEmotionTracker:
         return res
 
 
+def configure_camera(cap):
+    try:
+        cap.set(cv2.CAP_PROP_FOURCC, cv2.VideoWriter_fourcc(*"MJPG"))
+        cap.set(cv2.CAP_PROP_FRAME_WIDTH, 640)
+        cap.set(cv2.CAP_PROP_FRAME_HEIGHT, 480)
+        cap.set(cv2.CAP_PROP_FPS, 60)
+        cap.set(cv2.CAP_PROP_BUFFERSIZE, 1)
+    except Exception:
+        pass
+
+
 def open_camera(target_idx=None):
     """
-    Detecta automáticamente la cámara física con señal real
+    Detecta automáticamente la cámara física con señal real y alto rendimiento
     evitando cámaras virtuales inactivas (NVIDIA Broadcast, etc.).
     """
     if target_idx is not None:
@@ -116,29 +131,30 @@ def open_camera(target_idx=None):
         if not cap.isOpened():
             cap = cv2.VideoCapture(target_idx)
         if cap.isOpened():
+            configure_camera(cap)
             return cap, target_idx
         return None, target_idx
 
-    # Probar orden de prioridad: 2 (física habitual), 0, 1, 3
-    for idx in [2, 0, 1, 3]:
+    # Probar orden de prioridad: 0, 1, 2, 3
+    for idx in [0, 1, 2, 3]:
         for backend in [cv2.CAP_DSHOW, cv2.CAP_ANY]:
             try:
                 cap = cv2.VideoCapture(idx, backend)
                 if cap.isOpened():
+                    configure_camera(cap)
                     for _ in range(3):
                         ret, frame = cap.read()
                         if ret and frame is not None:
-                            # Verificar que no sea pantalla negra de cámara virtual inactiva
                             if np.mean(frame) > 2.0 and np.std(frame) > 2.0:
                                 return cap, idx
                     cap.release()
             except Exception:
                 pass
 
-    # Si ninguna cumplió el filtro de brillo, devolver la primera disponible
-    for idx in [2, 0, 1]:
+    for idx in [0, 1, 2]:
         cap = cv2.VideoCapture(idx)
         if cap.isOpened():
+            configure_camera(cap)
             return cap, idx
 
     return None, 0
@@ -170,19 +186,24 @@ def run_portable_app():
         input("\nPresiona ENTER para salir...")
         return
 
-    window_name = "Reconocimiento de Emociones"
-    cv2.namedWindow(window_name, cv2.WINDOW_AUTOSIZE)
+    window_name = "Reconocimiento de Emociones - AI Studio Portable"
+    cv2.namedWindow(window_name, cv2.WINDOW_NORMAL)
+    cv2.resizeWindow(window_name, 960, 720)
 
     print(f"\nCamara ID {cam_idx} activa.")
     print("Controles:")
     print("  * 'q' o ESC : Salir")
+    print("  * 't'       : Activar/Desactivar Suavizado EMA")
+    print("  * 'l'       : Mostrar/Ocultar Puntos Faciales (Landmarks)")
     print("  * 'c'       : Cambiar de camara")
     print("  * 's'       : Capturar foto")
     print("  * 'p'       : Pausar\n")
 
-    fps = 30.0
+    fps = 60.0
     prev_time = time.time()
     paused = False
+    use_smoothing = True
+    show_landmarks = True
     consecutive_failures = 0
 
     while True:
@@ -190,7 +211,6 @@ def run_portable_app():
             ret, frame = cap.read()
             if not ret or frame is None:
                 consecutive_failures += 1
-                print("   [!] Error al leer fotograma de la webcam.")
                 if consecutive_failures > 60:
                     time.sleep(0.03)
                 
@@ -206,21 +226,30 @@ def run_portable_app():
             continue
 
         h_f, w_f = frame.shape[:2]
-        detector.setInputSize((w_f, h_f))
-        _, faces = detector.detect(frame)
+        # Detección escalada ultrarrápida a 320px
+        scale = 320.0 / float(max(h_f, w_f))
+        w_s, h_s = int(w_f * scale), int(h_f * scale)
+        detect_img = cv2.resize(frame, (w_s, h_s), interpolation=cv2.INTER_LINEAR)
+
+        detector.setInputSize((w_s, h_s))
+        _, faces = detector.detect(detect_img)
 
         processed = []
         if faces is not None:
             gray = cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY)
+            inv_s = 1.0 / scale
             for f in faces:
-                x, y, w, h = int(f[0]), int(f[1]), int(f[2]), int(f[3])
-                x, y = max(0, x), max(0, y)
-                w, h = min(w, w_f - x), min(h, h_f - y)
+                x = max(0, int(f[0] * inv_s))
+                y = max(0, int(f[1] * inv_s))
+                w = int(f[2] * inv_s)
+                h = int(f[3] * inv_s)
+                w = min(w, w_f - x)
+                h = min(h, h_f - y)
                 if w < 16 or h < 16:
                     continue
 
                 roi = gray[y:y+h, x:x+w]
-                resized = cv2.resize(roi, (48, 48)).astype(np.float32)
+                resized = cv2.resize(roi, (48, 48), interpolation=cv2.INTER_AREA).astype(np.float32)
                 norm = (resized / 255.0 - 0.5) / 0.5
                 blob = norm.reshape(1, 1, 48, 48)
 
@@ -229,10 +258,10 @@ def run_portable_app():
                 exp = np.exp(logits - np.max(logits))
                 probs = exp / np.sum(exp)
 
-                landmarks = f[4:14].reshape((5, 2)).astype(int)
+                landmarks = (f[4:14].reshape((5, 2)) * inv_s).astype(int)
                 processed.append({"bbox": (x, y, w, h), "probs": probs, "landmarks": landmarks})
 
-        tracks = tracker.update(processed)
+        tracks = tracker.update(processed, use_smoothing=use_smoothing)
 
         # Dibujar HUD
         for t in tracks:
@@ -249,6 +278,10 @@ def run_portable_app():
             badge_text = f"{t['label']} {t['conf']:.0f}%"
             cv2.putText(frame, badge_text, (x, max(20, y - 8)),
                         cv2.FONT_HERSHEY_DUPLEX, 0.55, c, 1, cv2.LINE_AA)
+
+            if show_landmarks and t.get("landmarks") is not None:
+                for pt in t["landmarks"]:
+                    cv2.circle(frame, (int(pt[0]), int(pt[1])), 2, (0, 255, 255), -1, cv2.LINE_AA)
 
             for i, p_val in enumerate(t["probs"]):
                 by = y + i * 18
@@ -267,13 +300,20 @@ def run_portable_app():
         prev_time = curr_time
 
         cv2.rectangle(frame, (0, 0), (w_f, 28), (20, 20, 20), -1)
-        cv2.putText(frame, f"FPS: {fps:.1f} | Camara [{cam_idx}] | 'c' cambiar camara",
-                    (10, 19), cv2.FONT_HERSHEY_DUPLEX, 0.45, (0, 220, 255), 1, cv2.LINE_AA)
+        ema_str = "EMA:ON" if use_smoothing else "EMA:OFF"
+        cv2.putText(frame, f"FPS: {fps:.1f} | Cam [{cam_idx}] | {ema_str} | YuNet ONNX",
+                    (10, 19), cv2.FONT_HERSHEY_DUPLEX, 0.42, (0, 220, 255), 1, cv2.LINE_AA)
 
         cv2.imshow(window_name, frame)
         key = cv2.waitKey(1) & 0xFF
         if key == ord("q") or key == 27:
             break
+        elif key == ord("t"):
+            use_smoothing = not use_smoothing
+            print(f"Suavizado EMA: {'ACTIVADO' if use_smoothing else 'DESACTIVADO'}")
+        elif key == ord("l"):
+            show_landmarks = not show_landmarks
+            print(f"Landmarks: {'VISIBLES' if show_landmarks else 'OCULTOS'}")
         elif key == ord("c"):
             # Cambiar a la siguiente cámara
             cap.release()
