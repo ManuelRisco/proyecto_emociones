@@ -40,9 +40,9 @@ EMOTIONS = {
     6: {"name": "Neutral",     "color": (170, 170, 170)}, # Gris
 }
 
-# Umbrales mínimos de confianza adaptativos (alta sensibilidad en Disgusto y Sorprendido)
+# Umbrales mínimos de confianza adaptativos
 CONF_THRESHOLDS = {
-    0: 0.50,   # Enojado
+    0: 0.25,   # Enojado     — ULTRA SENSIBLE (baja exigencia para responder al ceño fruncido)
     1: 0.18,   # Disgusto    — ULTRA SENSIBLE
     2: 0.35,   # Miedo
     3: 0.28,   # Feliz
@@ -52,17 +52,17 @@ CONF_THRESHOLDS = {
 }
 
 SENSITIVITY_BOOST = {
-    0: 1.00,
+    0: 1.65,   # Boost Enojado (+65% reactividad e impulso a la barra)
     1: 1.55,   # Boost Disgusto (+55%)
     2: 1.05,
     3: 1.00,
     4: 1.05,
     5: 1.55,   # Boost Sorprendido (+55%)
-    6: 0.90,
+    6: 0.85,
 }
 
 DEBOUNCE_BY_CLASS = {
-    0: 6,      # Enojado (6 frames)
+    0: 2,      # Enojado (2 frames ~33ms, respuesta inmediata)
     1: 3,      # Disgusto (3 frames)
     2: 4,      # Miedo
     3: 3,      # Feliz
@@ -267,8 +267,9 @@ class PortableEmotionTracker:
                 mouth_open = float(np.linalg.norm(p_n - (p_rm + p_lm) / 2.0)) / eye_dist
                 if mouth_open > 0.82:
                     boosted[5] *= 1.45  # Sorprendido
-                elif mouth_open < 0.52:
-                    boosted[1] *= 1.40  # Disgusto
+                elif mouth_open < 0.55:
+                    boosted[1] *= 1.35  # Disgusto
+                    boosted[0] *= 1.40  # Enojado (labios tensos / ceño apretado)
 
             if boosted.sum() > 0:
                 boosted /= boosted.sum()

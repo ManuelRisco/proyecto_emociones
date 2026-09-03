@@ -285,8 +285,9 @@ class FaceTracker:
 
                 if mouth_open > 0.82:
                     boosted[5] *= 1.45  # Sorprendido
-                elif mouth_open < 0.52:
-                    boosted[1] *= 1.40  # Disgusto
+                elif mouth_open < 0.55:
+                    boosted[1] *= 1.35  # Disgusto
+                    boosted[0] *= 1.40  # Enojado (labios tensos / ceño apretado)
 
             sum_b = boosted.sum()
             if sum_b > 0:

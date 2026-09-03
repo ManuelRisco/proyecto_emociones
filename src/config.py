@@ -116,7 +116,7 @@ TRACKING_IOU_THRESHOLD = 0.30
 # Umbrales mínimos de confianza adaptativos. Disgusto y Sorprendido tienen umbrales
 # ultra-sensibles (0.18) para capturar microexpresiones sutiles en tiempo real.
 EMOTION_CONFIDENCE_THRESHOLDS = {
-    0: 0.50,   # Enojado     — umbral protector (evita falsos positivos al comer/concentrarse)
+    0: 0.25,   # Enojado     — ULTRA SENSIBLE (baja exigencia para responder al ceño fruncido)
     1: 0.18,   # Disgusto    — ULTRA SENSIBLE (captura muecas y nariz arrugada de inmediato)
     2: 0.35,   # Miedo       — umbral equilibrado
     3: 0.28,   # Feliz       — fácil detección
@@ -127,19 +127,18 @@ EMOTION_CONFIDENCE_THRESHOLDS = {
 
 # Multiplicadores de sensibilidad reactiva para nivelar emociones rápidas
 EMOTION_SENSITIVITY_BOOST = {
-    0: 1.00,
+    0: 1.65,   # Boost Enojado (+65% reactividad e impulso a la barra)
     1: 1.55,   # Boost Disgusto (+55% reactividad)
     2: 1.05,
     3: 1.00,
     4: 1.05,
     5: 1.55,   # Boost Sorprendido (+55% reactividad)
-    6: 0.90,   # Neutral ligeramente reducido para no absorber microexpresiones
+    6: 0.85,   # Neutral reducido para no absorber expresiones faciales
 }
 
-# Debounce adaptativo: Sorprendido (2 frames) y Disgusto (3 frames) reaccionan
-# de inmediato, mientras que estados continuos requieren mayor estabilidad.
+# Debounce adaptativo: Sorprendido y Enojado reaccionan en 2 frames (~33ms)
 EMOTION_DEBOUNCE_BY_CLASS = {
-    0: 6,      # Enojado (6 frames)
+    0: 2,      # Enojado (2 frames ~33ms, respuesta inmediata)
     1: 3,      # Disgusto (3 frames)
     2: 4,      # Miedo (4 frames)
     3: 3,      # Feliz (3 frames)
@@ -147,7 +146,7 @@ EMOTION_DEBOUNCE_BY_CLASS = {
     5: 2,      # Sorprendido ultra-reactivo (2 frames ~33ms)
     6: 5,      # Neutral (5 frames)
 }
-EMOTION_DEBOUNCE_FRAMES = 5
+EMOTION_DEBOUNCE_FRAMES = 4
 
 # ── Paleta Holográfica Multi-Persona (Colores Neón Distintivos) ──────────────
 PERSON_PALETTE = [
