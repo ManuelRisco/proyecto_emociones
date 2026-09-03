@@ -216,7 +216,13 @@ def preprocess_face(face_img: np.ndarray) -> torch.Tensor:
         face_img = cv2.resize(face_img, (IMG_SIZE, IMG_SIZE), interpolation=cv2.INTER_AREA)
 
     tensor = torch.from_numpy(np.ascontiguousarray(face_img)).to(DEVICE, dtype=torch.float32)
-    tensor = ((tensor / 255.0 - 0.5) / 0.5).unsqueeze(0).unsqueeze(0)
+
+    # Normalización Robusta Invariante a Iluminación (inmune a lámparas y cambios de luz)
+    t_mean = tensor.mean()
+    t_std = tensor.std() + 1e-5
+    # Mapea a la distribución canónica de FER-2013 (media ~128, std ~50)
+    standardized = torch.clamp(((tensor - t_mean) / t_std) * 50.0 + 128.0, 0.0, 255.0)
+    tensor = ((standardized / 255.0 - 0.5) / 0.5).unsqueeze(0).unsqueeze(0)
     return tensor
 
 
@@ -269,11 +275,49 @@ def predict_single_image(
             continue
 
         tensor = preprocess_face(face_roi)
-        pred_class, probs = model.predict_emotion(tensor)
+        _, probs = model.predict_emotion(tensor)
+        raw_probs = probs[0].cpu().numpy().copy()
 
-        pred_idx   = int(pred_class.item())
+        # Aplicar multiplicadores de sensibilidad adaptativa
+        boosted = raw_probs.copy()
+        for emo_i, boost_val in EMOTION_SENSITIVITY_BOOST.items():
+            boosted[emo_i] *= boost_val
+
+        # Apoyo geométrico por landmarks si están disponibles
+        lm = det.get("landmarks")
+        if lm is not None and len(lm) >= 5:
+            p_re, p_le = lm[0].astype(float), lm[1].astype(float)
+            p_n        = lm[2].astype(float)
+            p_rm, p_lm = lm[3].astype(float), lm[4].astype(float)
+            eye_dist   = max(5.0, float(np.linalg.norm(p_re - p_le)))
+            mouth_open = float(np.linalg.norm(p_n - (p_rm + p_lm) / 2.0)) / eye_dist
+
+            if mouth_open > 0.72:
+                factor = min(1.45, 1.0 + (mouth_open - 0.72) * 2.0)
+                boosted[5] *= factor
+            elif mouth_open < 0.58:
+                factor = min(1.35, 1.0 + (0.58 - mouth_open) * 2.0)
+                boosted[1] *= factor
+                boosted[0] *= factor
+
+        sum_b = boosted.sum()
+        if sum_b > 0:
+            boosted /= sum_b
+
+        # Resolución con umbrales de confianza
+        raw_best_idx = int(np.argmax(boosted))
+        if float(boosted[raw_best_idx]) >= EMOTION_CONFIDENCE_THRESHOLDS.get(raw_best_idx, 0.0):
+            pred_idx = raw_best_idx
+        else:
+            sorted_idxs = np.argsort(boosted)[::-1]
+            pred_idx = int(sorted_idxs[0])
+            for cand in sorted_idxs[1:]:
+                if float(boosted[cand]) >= EMOTION_CONFIDENCE_THRESHOLDS.get(int(cand), 0.0):
+                    pred_idx = int(cand)
+                    break
+
         pred_label = EMOTION_LABELS[pred_idx]
-        confidence = float(probs[0][pred_idx].item()) * 100
+        confidence = float(boosted[pred_idx]) * 100
 
         result = {
             "face_index":      i,
@@ -283,7 +327,7 @@ def predict_single_image(
             "predicted_label": pred_label,
             "confidence":      confidence,
             "probabilities": {
-                EMOTION_LABELS[j]: float(probs[0][j].item()) * 100
+                EMOTION_LABELS[j]: float(boosted[j]) * 100
                 for j in range(NUM_CLASSES)
             },
             "landmarks": det["landmarks"],

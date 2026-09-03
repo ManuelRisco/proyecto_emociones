@@ -116,7 +116,7 @@ TRACKING_IOU_THRESHOLD = 0.30
 # Umbrales mínimos de confianza adaptativos. Disgusto y Sorprendido tienen umbrales
 # ultra-sensibles (0.18) para capturar microexpresiones sutiles en tiempo real.
 EMOTION_CONFIDENCE_THRESHOLDS = {
-    0: 0.25,   # Enojado     — ULTRA SENSIBLE (baja exigencia para responder al ceño fruncido)
+    0: 0.30,   # Enojado     — calibración equilibrada y sensible
     1: 0.18,   # Disgusto    — ULTRA SENSIBLE (captura muecas y nariz arrugada de inmediato)
     2: 0.35,   # Miedo       — umbral equilibrado
     3: 0.28,   # Feliz       — fácil detección
@@ -127,13 +127,13 @@ EMOTION_CONFIDENCE_THRESHOLDS = {
 
 # Multiplicadores de sensibilidad reactiva para nivelar emociones rápidas
 EMOTION_SENSITIVITY_BOOST = {
-    0: 1.65,   # Boost Enojado (+65% reactividad e impulso a la barra)
+    0: 1.55,   # Boost Enojado (+55% reactividad e impulso a la barra)
     1: 1.55,   # Boost Disgusto (+55% reactividad)
     2: 1.05,
     3: 1.00,
     4: 1.05,
     5: 1.55,   # Boost Sorprendido (+55% reactividad)
-    6: 0.85,   # Neutral reducido para no absorber expresiones faciales
+    6: 0.85,   # Neutral calibrado
 }
 
 # Debounce adaptativo: Sorprendido y Enojado reaccionan en 2 frames (~33ms)

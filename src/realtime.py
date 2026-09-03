@@ -48,7 +48,10 @@ def _extract_biometric_signature(
     t_mean, t_std = np.mean(tpl), np.std(tpl)
     tpl_norm = (tpl - t_mean) / (t_std + 1e-5)
 
-    hist = cv2.calcHist([gray_face], [0], None, [16], [0, 256]).flatten()
+    # Normalización local de luminosidad para que el histograma sea inmune a lámparas
+    gf_m, gf_s = np.mean(gray_face), np.std(gray_face) + 1e-5
+    gf_norm = np.clip(((gray_face - gf_m) / gf_s) * 50.0 + 128.0, 0, 255).astype(np.uint8)
+    hist = cv2.calcHist([gf_norm], [0], None, [16], [0, 256]).flatten()
     h_norm = hist / (np.linalg.norm(hist) + 1e-5)
 
     geom_vec = None
@@ -283,11 +286,14 @@ class FaceTracker:
                 eye_dist   = max(5.0, float(np.linalg.norm(p_re - p_le)))
                 mouth_open = float(np.linalg.norm(p_n - (p_rm + p_lm) / 2.0)) / eye_dist
 
-                if mouth_open > 0.82:
-                    boosted[5] *= 1.45  # Sorprendido
-                elif mouth_open < 0.55:
-                    boosted[1] *= 1.35  # Disgusto
-                    boosted[0] *= 1.40  # Enojado (labios tensos / ceño apretado)
+                # Transición suave continua (sin saltos bruscos si la iluminación fluctúa)
+                if mouth_open > 0.72:
+                    factor = min(1.45, 1.0 + (mouth_open - 0.72) * 2.0)
+                    boosted[5] *= factor  # Sorprendido gradual
+                elif mouth_open < 0.58:
+                    factor = min(1.35, 1.0 + (0.58 - mouth_open) * 2.0)
+                    boosted[1] *= factor  # Disgusto gradual
+                    boosted[0] *= factor  # Enojado gradual (labios tensos / ceño apretado)
 
             sum_b = boosted.sum()
             if sum_b > 0:
