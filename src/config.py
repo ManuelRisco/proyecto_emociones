@@ -112,22 +112,54 @@ SMOOTHING_ALPHA      = 0.30
 BBOX_SMOOTHING_ALPHA = 0.35
 TRACKING_IOU_THRESHOLD = 0.30
 
-# ── Filtro de Precisión por Situación (Anti-Confusión Neutral↔Enojado) ────────
-# Umbral mínimo de confianza que debe superar una emoción para mostrarse como
-# dominante. Si no alcanza el umbral, se usa la segunda emoción más probable.
-# Esto evita que "concentración/comiendo/leyendo" se confunda con "Enojado".
+# ── Filtro de Precisión por Situación y Sensibilidad Avanzada ─────────────────
+# Umbrales mínimos de confianza adaptativos. Disgusto y Sorprendido tienen umbrales
+# ultra-sensibles (0.18) para capturar microexpresiones sutiles en tiempo real.
 EMOTION_CONFIDENCE_THRESHOLDS = {
-    0: 0.55,   # Enojado    — requiere 55% de confianza (era la que más se confundía)
-    1: 0.45,   # Disgusto   — umbral moderado
-    2: 0.45,   # Miedo      — umbral moderado
-    3: 0.35,   # Feliz      — umbral bajo (muy distintiva)
-    4: 0.42,   # Triste     — umbral moderado
-    5: 0.38,   # Sorprendido — umbral bajo (muy distintiva)
-    6: 0.30,   # Neutral    — umbral muy bajo (catch-all para estados ambiguos)
+    0: 0.50,   # Enojado     — umbral protector (evita falsos positivos al comer/concentrarse)
+    1: 0.18,   # Disgusto    — ULTRA SENSIBLE (captura muecas y nariz arrugada de inmediato)
+    2: 0.35,   # Miedo       — umbral equilibrado
+    3: 0.28,   # Feliz       — fácil detección
+    4: 0.35,   # Triste      — umbral equilibrado
+    5: 0.18,   # Sorprendido — ULTRA SENSIBLE (captura apertura de ojos/boca rápida)
+    6: 0.24,   # Neutral     — umbral base
 }
 
-# Frames consecutivos que debe mantenerse una nueva emoción antes de cambiarla
-# en el HUD (evita saltos instantáneos entre emociones similares).
-# Un valor de 6 ≈ 0.1 segundos a 60 FPS, suficiente para filtrar microexpresiones
-# sin añadir lag perceptible.
-EMOTION_DEBOUNCE_FRAMES = 6
+# Multiplicadores de sensibilidad reactiva para nivelar emociones rápidas
+EMOTION_SENSITIVITY_BOOST = {
+    0: 1.00,
+    1: 1.55,   # Boost Disgusto (+55% reactividad)
+    2: 1.05,
+    3: 1.00,
+    4: 1.05,
+    5: 1.55,   # Boost Sorprendido (+55% reactividad)
+    6: 0.90,   # Neutral ligeramente reducido para no absorber microexpresiones
+}
+
+# Debounce adaptativo: Sorprendido (2 frames) y Disgusto (3 frames) reaccionan
+# de inmediato, mientras que estados continuos requieren mayor estabilidad.
+EMOTION_DEBOUNCE_BY_CLASS = {
+    0: 6,      # Enojado (6 frames)
+    1: 3,      # Disgusto (3 frames)
+    2: 4,      # Miedo (4 frames)
+    3: 3,      # Feliz (3 frames)
+    4: 5,      # Triste (5 frames)
+    5: 2,      # Sorprendido ultra-reactivo (2 frames ~33ms)
+    6: 5,      # Neutral (5 frames)
+}
+EMOTION_DEBOUNCE_FRAMES = 5
+
+# ── Paleta Holográfica Multi-Persona (Colores Neón Distintivos) ──────────────
+PERSON_PALETTE = [
+    (255, 220, 0),    # Sujeto 1: Cian Holográfico (#00DCFF)
+    (0, 180, 255),    # Sujeto 2: Ámbar / Naranja Neón (#FFB400)
+    (255, 70, 210),   # Sujeto 3: Magenta Cyberpunk (#D246FF)
+    (60, 255, 120),   # Sujeto 4: Verde Esmeralda Matrix (#78FF3C)
+    (255, 140, 20),   # Sujeto 5: Azul Cobalto Eléctrico (#148CFF)
+    (0, 240, 255),    # Sujeto 6: Amarillo Neón (#FFF000)
+]
+
+# ── Memoria Biométrica de Re-Identificación (Face Re-ID) ─────────────────────
+# Umbral de similitud biométrica para reconocer a un sujeto que salió de la cámara y vuelve
+REID_SIMILARITY_THRESHOLD = 0.62
+REID_TEMPLATE_SIZE = (28, 28)
