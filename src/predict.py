@@ -193,37 +193,65 @@ def get_face_detector() -> FaceDetector:
 # 3. PREPROCESAMIENTO DIRECTO EN C++ / PYTORCH (< 0.05 ms)
 # ──────────────────────────────────────────────────────────────────────────────
 
+def align_and_crop_face(
+    frame_gray: np.ndarray,
+    bbox: tuple,
+    landmarks: np.ndarray | None = None,
+    target_size: int = IMG_SIZE,
+) -> torch.Tensor:
+    """
+    Extrae, alinea afínmente por los ojos y estandariza el rostro con invarianza lumínica total:
+    1. Alineación afín: Elimina inclinaciones de cabeza para que los rasgos coincidan con FER-2013.
+    2. CLAHE local en 4x4 tiles: Disipa sombras duras y destellos de lámparas laterales.
+    3. Estandarización canónica Z-score: Fija la media a 128 y std a 50 (invarianza a brillo).
+    """
+    x, y, w, h = bbox
+    h_f, w_f = frame_gray.shape[:2]
+
+    # Nivelación afín por inclinación de ojos
+    if landmarks is not None and len(landmarks) >= 2:
+        p_re = landmarks[0].astype(float)
+        p_le = landmarks[1].astype(float)
+        dx = p_le[0] - p_re[0]
+        dy = p_le[1] - p_re[1]
+        angle = float(np.degrees(np.arctan2(dy, dx)))
+
+        if abs(angle) > 2.0 and abs(angle) < 45.0:
+            center = (float(x + w / 2.0), float(y + h / 2.0))
+            M = cv2.getRotationMatrix2D(center, angle, 1.0)
+            rotated = cv2.warpAffine(frame_gray, M, (w_f, h_f), flags=cv2.INTER_LINEAR, borderMode=cv2.BORDER_REFLECT)
+            x1 = max(0, min(w_f - 1, x))
+            y1 = max(0, min(h_f - 1, y))
+            x2 = max(0, min(w_f, x + w))
+            y2 = max(0, min(h_f, y + h))
+            face = rotated[y1:y2, x1:x2] if (x2 > x1 and y2 > y1) else frame_gray[y:y+h, x:x+w]
+        else:
+            face = frame_gray[y:y+h, x:x+w]
+    else:
+        face = frame_gray[y:y+h, x:x+w]
+
+    if face.shape[0] != target_size or face.shape[1] != target_size:
+        face = cv2.resize(face, (target_size, target_size), interpolation=cv2.INTER_AREA)
+
+    # CLAHE local adaptativo para nivelar sombras de lámpara
+    clahe = cv2.createCLAHE(clipLimit=2.0, tileGridSize=(4, 4))
+    face_eq = clahe.apply(face)
+
+    # Estandarización canónica Z-score
+    tensor = torch.from_numpy(np.ascontiguousarray(face_eq)).to(DEVICE, dtype=torch.float32)
+    t_mean = tensor.mean()
+    t_std  = tensor.std() + 1e-5
+    standardized = torch.clamp(((tensor - t_mean) / t_std) * 50.0 + 128.0, 0.0, 255.0)
+    norm = ((standardized / 255.0 - 0.5) / 0.5).unsqueeze(0).unsqueeze(0)
+    return norm
+
+
 def preprocess_face(face_img: np.ndarray) -> torch.Tensor:
-    """
-    Preprocesa un recorte de rostro para la inferencia de la red neuronal.
-
-    Optimización de alto rendimiento:
-      - Utiliza cv2.resize directo en C++
-      - Convierte a Tensor PyTorch directamente desde memoria contigua
-      - Elimina la sobrecarga de PIL y pipelines lentos de CPU
-      - Tiempo de ejecución: < 0.05 ms por rostro
-
-    Args:
-        face_img: Array BGR o grayscale del recorte del rostro.
-
-    Returns:
-        Tensor (1, 1, IMG_SIZE, IMG_SIZE) en DEVICE, listo para model().
-    """
+    """Compatibilidad: preprocesa un recorte directo de rostro."""
     if len(face_img.shape) == 3:
         face_img = cv2.cvtColor(face_img, cv2.COLOR_BGR2GRAY)
-
-    if face_img.shape[0] != IMG_SIZE or face_img.shape[1] != IMG_SIZE:
-        face_img = cv2.resize(face_img, (IMG_SIZE, IMG_SIZE), interpolation=cv2.INTER_AREA)
-
-    tensor = torch.from_numpy(np.ascontiguousarray(face_img)).to(DEVICE, dtype=torch.float32)
-
-    # Normalización Robusta Invariante a Iluminación (inmune a lámparas y cambios de luz)
-    t_mean = tensor.mean()
-    t_std = tensor.std() + 1e-5
-    # Mapea a la distribución canónica de FER-2013 (media ~128, std ~50)
-    standardized = torch.clamp(((tensor - t_mean) / t_std) * 50.0 + 128.0, 0.0, 255.0)
-    tensor = ((standardized / 255.0 - 0.5) / 0.5).unsqueeze(0).unsqueeze(0)
-    return tensor
+    h, w = face_img.shape[:2]
+    return align_and_crop_face(face_img, (0, 0, w, h), landmarks=None)
 
 
 # ──────────────────────────────────────────────────────────────────────────────
@@ -270,13 +298,19 @@ def predict_single_image(
 
     for i, det in enumerate(detections):
         x, y, w, h = det["bbox"]
-        face_roi = gray[y:y+h, x:x+w]
-        if face_roi.size == 0:
+        if w < 16 or h < 16:
             continue
 
-        tensor = preprocess_face(face_roi)
-        _, probs = model.predict_emotion(tensor)
-        raw_probs = probs[0].cpu().numpy().copy()
+        # Alineación facial afín + CLAHE + Estandarización
+        tensor = align_and_crop_face(gray, (x, y, w, h), landmarks=det.get("landmarks"))
+
+        # Test-Time Augmentation (TTA con flip horizontal para máxima estabilidad y precisión)
+        tensor_flip = torch.flip(tensor, dims=[-1])
+        batch_tta = torch.cat([tensor, tensor_flip], dim=0)
+        with torch.no_grad():
+            outputs = model(batch_tta)
+            probs_batch = torch.softmax(outputs, dim=1).cpu().numpy()
+            raw_probs = (0.65 * probs_batch[0] + 0.35 * probs_batch[1]).copy()
 
         # Aplicar multiplicadores de sensibilidad adaptativa
         boosted = raw_probs.copy()

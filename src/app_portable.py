@@ -130,6 +130,53 @@ def _compute_biometric_similarity_portable(sig1, sig2):
     return 0.50 * sim_tpl + 0.30 * sim_geom + 0.20 * sim_hist
 
 
+def align_and_crop_face_portable(frame_gray, bbox, landmarks, target_size=48):
+    """
+    Extrae, alinea afínmente por los ojos y estandariza el rostro con invarianza lumínica:
+    1. Alineación afín: Elimina inclinaciones de cabeza para que los rasgos coincidan con FER-2013.
+    2. CLAHE local en 4x4 tiles: Disipa sombras duras y destellos de lámparas laterales.
+    3. Estandarización canónica Z-score: Fija la media a 128 y std a 50 (invarianza a brillo).
+    """
+    x, y, w, h = bbox
+    h_f, w_f = frame_gray.shape[:2]
+
+    # Nivelación afín por inclinación de ojos
+    if landmarks is not None and len(landmarks) >= 2:
+        p_re = landmarks[0].astype(float)
+        p_le = landmarks[1].astype(float)
+        dx = p_le[0] - p_re[0]
+        dy = p_le[1] - p_re[1]
+        angle = float(np.degrees(np.arctan2(dy, dx)))
+
+        if abs(angle) > 2.0 and abs(angle) < 45.0:
+            center = (float(x + w / 2.0), float(y + h / 2.0))
+            M = cv2.getRotationMatrix2D(center, angle, 1.0)
+            rotated = cv2.warpAffine(frame_gray, M, (w_f, h_f), flags=cv2.INTER_LINEAR, borderMode=cv2.BORDER_REFLECT)
+            x1 = max(0, min(w_f - 1, x))
+            y1 = max(0, min(h_f - 1, y))
+            x2 = max(0, min(w_f, x + w))
+            y2 = max(0, min(h_f, y + h))
+            face = rotated[y1:y2, x1:x2] if (x2 > x1 and y2 > y1) else frame_gray[y:y+h, x:x+w]
+        else:
+            face = frame_gray[y:y+h, x:x+w]
+    else:
+        face = frame_gray[y:y+h, x:x+w]
+
+    if face.shape[0] != target_size or face.shape[1] != target_size:
+        face = cv2.resize(face, (target_size, target_size), interpolation=cv2.INTER_AREA)
+
+    # CLAHE local adaptativo para nivelar sombras de lámpara
+    clahe = cv2.createCLAHE(clipLimit=2.0, tileGridSize=(4, 4))
+    face_eq = clahe.apply(face)
+
+    # Estandarización canónica Z-score (media 128, std 50 de FER2013)
+    f_m = float(np.mean(face_eq))
+    f_s = float(np.std(face_eq)) + 1e-5
+    standardized = np.clip(((face_eq.astype(np.float32) - f_m) / f_s) * 50.0 + 128.0, 0.0, 255.0)
+    norm = (standardized / 255.0 - 0.5) / 0.5
+    return norm
+
+
 class PortableEmotionTracker:
     def __init__(self, alpha=0.30, conf_thresholds=None):
         self.alpha = alpha
@@ -169,7 +216,11 @@ class PortableEmotionTracker:
                         int(0.35 * w + 0.65 * t["bbox"][2]),
                         int(0.35 * h + 0.65 * t["bbox"][3])
                     )
-                    t["probs"] = self.alpha * d["probs"] + (1.0 - self.alpha) * t["probs"]
+                    # EMA adaptativo: alpha=0.18 en reposo para máxima firmeza;
+                    # alpha=0.48 ante cambios gestuales rápidos para respuesta inmediata
+                    diff = float(np.max(np.abs(d["probs"] - t["probs"])))
+                    dyn_alpha = 0.48 if diff > 0.22 else 0.18
+                    t["probs"] = dyn_alpha * d["probs"] + (1.0 - dyn_alpha) * t["probs"]
                     t["probs"] /= t["probs"].sum()
                 else:
                     t["bbox"] = d["bbox"]
@@ -556,22 +607,22 @@ def run_portable_app():
                 if w < 16 or h < 16:
                     continue
 
-                roi = gray[y:y+h, x:x+w]
-                resized = cv2.resize(roi, (48, 48), interpolation=cv2.INTER_AREA).astype(np.float32)
-
-                # Normalización Robusta Invariante a Iluminación (inmune a lámparas y cambios bruscos de luz)
-                r_mean = float(np.mean(resized))
-                r_std  = float(np.std(resized)) + 1e-5
-                standardized = np.clip(((resized - r_mean) / r_std) * 50.0 + 128.0, 0.0, 255.0)
-                norm = (standardized / 255.0 - 0.5) / 0.5
-                blob = norm.reshape(1, 1, 48, 48)
-
-                emotion_net.setInput(blob)
-                logits = emotion_net.forward()[0]
-                exp = np.exp(logits - np.max(logits))
-                probs = exp / np.sum(exp)
-
                 landmarks = (f[4:14].reshape((5, 2)) * inv_s).astype(int)
+
+                # Alineación afín por inclinación de ojos + CLAHE local + Estandarización canónica
+                norm = align_and_crop_face_portable(gray, (x, y, w, h), landmarks)
+                norm_flip = np.flip(norm, axis=1)
+                batch = np.stack([norm, norm_flip]).reshape(2, 1, 48, 48).astype(np.float32)
+
+                # Inferencia TTA (original + flip horizontal)
+                emotion_net.setInput(batch)
+                logits = emotion_net.forward()
+                exp0 = np.exp(logits[0] - np.max(logits[0]))
+                p0 = exp0 / np.sum(exp0)
+                exp1 = np.exp(logits[1] - np.max(logits[1]))
+                p1 = exp1 / np.sum(exp1)
+                probs = 0.65 * p0 + 0.35 * p1
+
                 processed.append({"bbox": (x, y, w, h), "probs": probs, "landmarks": landmarks})
 
         tracks = tracker.update(processed, frame_gray=gray, use_smoothing=True)

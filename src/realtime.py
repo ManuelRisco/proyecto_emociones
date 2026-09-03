@@ -28,7 +28,7 @@ from src.config import (
     EMOTION_SENSITIVITY_BOOST, EMOTION_DEBOUNCE_BY_CLASS,
     REID_SIMILARITY_THRESHOLD, REID_TEMPLATE_SIZE,
 )
-from src.predict import FaceDetector, load_model, preprocess_face
+from src.predict import FaceDetector, load_model, preprocess_face, align_and_crop_face
 
 
 # ──────────────────────────────────────────────────────────────────────────────
@@ -183,7 +183,11 @@ class FaceTracker:
                         int(a * cw + (1 - a) * pw),
                         int(a * ch + (1 - a) * ph),
                     )
-                    track["probs"] = self.alpha * det["raw_probs"] + (1 - self.alpha) * track["probs"]
+                    # EMA adaptativo: alpha=0.18 para estabilidad firme en reposo;
+                    # alpha=0.48 ante cambios gestuales rápidos para respuesta inmediata
+                    diff = float(np.max(np.abs(det["raw_probs"] - track["probs"])))
+                    dyn_alpha = 0.48 if diff > 0.22 else 0.18
+                    track["probs"] = dyn_alpha * det["raw_probs"] + (1.0 - dyn_alpha) * track["probs"]
                     track["probs"] /= (track["probs"].sum() + 1e-7)
                 else:
                     track["bbox"]  = det["bbox"]
@@ -645,18 +649,19 @@ def run_realtime() -> None:
 
             for det in raw_detections:
                 x, y, w, h = det["bbox"]
-                face_roi = gray[y:y+h, x:x+w]
-                if face_roi.size == 0 or w < 16 or h < 16:
-                    continue
+                # Alineación afín por inclinación de ojos + CLAHE local + Estandarización canónica
+                tensor = align_and_crop_face(gray, (x, y, w, h), landmarks=det.get("landmarks"))
+                tensor_flip = torch.flip(tensor, dims=[-1])
+                batch_tta = torch.cat([tensor, tensor_flip], dim=0)
 
-                tensor = preprocess_face(face_roi)
                 with torch.no_grad():
                     if is_cuda:
                         with torch.amp.autocast(device_type="cuda", dtype=torch.float16):
-                            outputs = model(tensor)
+                            outputs = model(batch_tta)
                     else:
-                        outputs = model(tensor)
-                    probs = torch.softmax(outputs, dim=1).cpu().numpy()[0]
+                        outputs = model(batch_tta)
+                    probs_batch = torch.softmax(outputs.float(), dim=1).cpu().numpy()
+                    probs = (0.65 * probs_batch[0] + 0.35 * probs_batch[1]).copy()
 
                 processed_dets.append({
                     "bbox":       (x, y, w, h),
