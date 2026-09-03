@@ -5,7 +5,6 @@
 # Dependencias: Únicamente opencv-python y numpy (sin PyTorch, sin GPU obligatoria)
 # ============================================================================
 
-import math
 import os
 import sys
 import time
@@ -30,19 +29,20 @@ EMOTION_CANDIDATES = [
 ]
 EMOTION_MODEL = next((p for p in EMOTION_CANDIDATES if os.path.exists(p)), EMOTION_CANDIDATES[0])
 
+# Colores característicos de cada emoción (tradicionales)
 EMOTIONS = {
-    0: {"name": "Enojado",     "color": (40, 40, 235)},
-    1: {"name": "Disgusto",    "color": (34, 139, 34)},
-    2: {"name": "Miedo",       "color": (180, 50, 180)},
-    3: {"name": "Feliz",       "color": (0, 215, 255)},
-    4: {"name": "Triste",      "color": (235, 120, 40)},
-    5: {"name": "Sorprendido", "color": (0, 140, 255)},
-    6: {"name": "Neutral",     "color": (170, 170, 170)},
+    0: {"name": "Enojado",     "color": (40, 40, 235)},   # Rojo
+    1: {"name": "Disgusto",    "color": (34, 139, 34)},   # Verde bosque
+    2: {"name": "Miedo",       "color": (180, 50, 180)},  # Morado
+    3: {"name": "Feliz",       "color": (0, 215, 255)},   # Amarillo/Dorado
+    4: {"name": "Triste",      "color": (235, 120, 40)},  # Azul
+    5: {"name": "Sorprendido", "color": (0, 140, 255)},   # Naranja
+    6: {"name": "Neutral",     "color": (170, 170, 170)}, # Gris
 }
 
 # Umbrales mínimos de confianza adaptativos (alta sensibilidad en Disgusto y Sorprendido)
 CONF_THRESHOLDS = {
-    0: 0.50,   # Enojado     — umbral protector
+    0: 0.50,   # Enojado
     1: 0.18,   # Disgusto    — ULTRA SENSIBLE
     2: 0.35,   # Miedo
     3: 0.28,   # Feliz
@@ -70,15 +70,6 @@ DEBOUNCE_BY_CLASS = {
     5: 2,      # Sorprendido ultra-rápido (2 frames)
     6: 5,      # Neutral
 }
-
-PERSON_PALETTE = [
-    (255, 220, 0),    # Sujeto 1: Cian Holográfico
-    (0, 180, 255),    # Sujeto 2: Ámbar Neón
-    (255, 70, 210),   # Sujeto 3: Magenta
-    (60, 255, 120),   # Sujeto 4: Verde Esmeralda
-    (255, 140, 20),   # Sujeto 5: Azul Cobalto
-    (0, 240, 255),    # Sujeto 6: Amarillo Neón
-]
 
 REID_SIMILARITY_THRESHOLD = 0.62
 
@@ -181,7 +172,6 @@ class PortableEmotionTracker:
                     t["probs"] = d["probs"].copy()
                 t["landmarks"] = d.get("landmarks")
 
-                # Actualizar memoria
                 if frame_gray is not None:
                     bx, by, bw, bh = t["bbox"]
                     f_roi = frame_gray[by:by+bh, bx:bx+bw]
@@ -228,7 +218,6 @@ class PortableEmotionTracker:
                 if sig is not None:
                     self.gallery[assigned_id] = {
                         "signature": sig,
-                        "person_color": PERSON_PALETTE[(assigned_id - 1) % len(PERSON_PALETTE)],
                         "person_label": f"SUJETO #{assigned_id:02d}",
                     }
 
@@ -313,7 +302,7 @@ class PortableEmotionTracker:
                 t["display_idx"] = resolved
 
             disp_idx = t.get("display_idx", resolved)
-            p_color = PERSON_PALETTE[(tid - 1) % len(PERSON_PALETTE)]
+            emotion_color = EMOTIONS[disp_idx]["color"]
             p_label = f"SUJETO #{tid:02d}"
 
             if t.get("reid_banner", 0) > 0:
@@ -321,7 +310,7 @@ class PortableEmotionTracker:
 
             res.append({
                 "id": tid,
-                "person_color": p_color,
+                "emotion_color": emotion_color,
                 "person_label": p_label,
                 "bbox": t["bbox"],
                 "probs": probs,
@@ -336,93 +325,23 @@ class PortableEmotionTracker:
 
 
 # ──────────────────────────────────────────────────────────────────────────────
-# 2. DIBUJO DEL HUD HOLOGRÁFICO (PORTABLE)
+# 2. DIBUJO DEL HUD Y REPORTES (PORTABLE)
 # ──────────────────────────────────────────────────────────────────────────────
 
-def _draw_stepped_silhouette_portable(frame, bbox, person_color, block_size=14):
-    h_f, w_f = frame.shape[:2]
-    x, y, w, h = bbox
-    cx = x + w // 2
-
-    top_y = max(45, y - int(0.35 * h))
-    bot_y = min(h_f - 30, y + int(2.10 * h))
-
-    grid_span_w = max(int(w * 2.35), 70)
-    left_x  = max(6, cx - grid_span_w // 2)
-    right_x = min(w_f - 6, cx + grid_span_w // 2)
-
-    cell_w = max(2, (right_x - left_x) // block_size)
-    cell_h = max(3, (bot_y - top_y) // block_size)
-
-    mask_grid = np.zeros((cell_h, cell_w), dtype=np.uint8)
-    center_col = cell_w // 2
-
-    for row in range(cell_h):
-        prog = row / max(1, cell_h - 1)
-        if prog < 0.28:
-            rad = max(1, int((0.30 + 0.70 * (prog / 0.28)) * (w * 0.58 / block_size)))
-        elif prog < 0.40:
-            rad = max(1, int(w * 0.46 / block_size))
-        elif prog < 0.58:
-            shoulder_expand = (prog - 0.40) / 0.18
-            rad = max(1, int((w * 0.55 + shoulder_expand * w * 0.60) / block_size))
-        else:
-            rad = max(1, int((w * 1.08 - 0.12 * prog * w) / block_size))
-
-        c_min = max(0, center_col - rad)
-        c_max = min(cell_w, center_col + rad + 1)
-        mask_grid[row, c_min:c_max] = 255
-
-    pixel_mask = cv2.resize(mask_grid, (cell_w * block_size, cell_h * block_size), interpolation=cv2.INTER_NEAREST)
-
-    full_mask = np.zeros((h_f, w_f), dtype=np.uint8)
-    paste_y2 = min(h_f, top_y + pixel_mask.shape[0])
-    paste_x2 = min(w_f, left_x + pixel_mask.shape[1])
-    h_p = paste_y2 - top_y
-    w_p = paste_x2 - left_x
-
-    if h_p > 0 and w_p > 0:
-        full_mask[top_y:paste_y2, left_x:paste_x2] = pixel_mask[:h_p, :w_p]
-
-    contours, _ = cv2.findContours(full_mask, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
-    if contours:
-        glow = frame.copy()
-        cv2.drawContours(glow, contours, -1, person_color, 4)
-        cv2.addWeighted(glow, 0.40, frame, 0.60, 0, frame)
-        cv2.drawContours(frame, contours, -1, (255, 255, 255), 1)
-
-        scan_t = (math.sin(time.time() * 3.2 + float(bbox[0]) * 0.02) + 1.0) / 2.0
-        laser_y = int(top_y + scan_t * (bot_y - top_y))
-
-        cv2.line(frame, (left_x, laser_y), (paste_x2, laser_y), person_color, 2)
-        cv2.line(frame, (left_x, laser_y), (paste_x2, laser_y), (255, 255, 255), 1)
-
-        tag_x = paste_x2 + 8
-        if tag_x + 58 < w_f:
-            cv2.line(frame, (paste_x2, laser_y), (tag_x, laser_y), person_color, 1)
-            t_ov = frame.copy()
-            cv2.rectangle(t_ov, (tag_x, laser_y - 10), (tag_x + 56, laser_y + 10), (20, 20, 30), -1)
-            cv2.rectangle(t_ov, (tag_x, laser_y - 10), (tag_x + 56, laser_y + 10), person_color, 1)
-            cv2.addWeighted(t_ov, 0.85, frame, 0.15, 0, frame)
-            temp_sim = 36.2 + ((bbox[0] * 19) % 7) * 0.1
-            cv2.putText(frame, f"{temp_sim:.1f} C", (tag_x + 5, laser_y + 4),
-                        cv2.FONT_HERSHEY_DUPLEX, 0.35, (255, 255, 255), 1, cv2.LINE_AA)
-
-
 def _draw_probability_card_portable(frame, card_x, card_y, card_w, card_h, track):
-    person_color = track["person_color"]
-    person_label = track["person_label"]
-    pred_idx     = track["pred_idx"]
-    probs        = track["boosted_probs"]
+    emotion_color = track["emotion_color"]
+    person_label  = track["person_label"]
+    pred_idx      = track["pred_idx"]
+    probs         = track["boosted_probs"]
 
     overlay = frame.copy()
     cv2.rectangle(overlay, (card_x, card_y), (card_x + card_w, card_y + card_h), (12, 14, 20), -1)
-    cv2.rectangle(overlay, (card_x, card_y), (card_x + card_w, card_y + card_h), person_color, 1)
+    cv2.rectangle(overlay, (card_x, card_y), (card_x + card_w, card_y + card_h), emotion_color, 1)
     cv2.addWeighted(overlay, 0.85, frame, 0.15, 0, frame)
 
     header_text = f"{person_label} | {track['label'].upper()}"
     cv2.putText(frame, header_text, (card_x + 8, card_y + 15),
-                cv2.FONT_HERSHEY_DUPLEX, 0.38, person_color, 1, cv2.LINE_AA)
+                cv2.FONT_HERSHEY_DUPLEX, 0.38, emotion_color, 1, cv2.LINE_AA)
     cv2.line(frame, (card_x + 6, card_y + 20), (card_x + card_w - 6, card_y + 20), (50, 55, 70), 1)
 
     num_emos = len(probs)
@@ -434,14 +353,18 @@ def _draw_probability_card_portable(frame, card_x, card_y, card_w, card_h, track
         prob = float(probs[i])
         by = card_y + 24 + i * (bar_h + 2)
         is_active = (i == pred_idx)
-        bar_color = person_color if is_active else (70, 75, 85)
+        bar_color = EMOTIONS[i]["color"]
 
         fill_w = int(max_bar_w * prob)
         cv2.rectangle(frame, (card_x + 36, by), (card_x + 36 + max_bar_w, by + bar_h), (25, 28, 35), -1)
         if fill_w > 0:
-            cv2.rectangle(frame, (card_x + 36, by), (card_x + 36 + fill_w, by + bar_h), bar_color, -1)
+            if is_active:
+                cv2.rectangle(frame, (card_x + 36, by), (card_x + 36 + fill_w, by + bar_h), bar_color, -1)
+            else:
+                dimmed = tuple(int(c * 0.45) for c in bar_color)
+                cv2.rectangle(frame, (card_x + 36, by), (card_x + 36 + fill_w, by + bar_h), dimmed, -1)
 
-        text_c = (255, 255, 255) if is_active else (160, 160, 170)
+        text_c = (255, 255, 255) if is_active else (150, 150, 150)
         lbl_short = EMOTIONS[i]["name"][:3]
         cv2.putText(frame, lbl_short, (card_x + 8, by + bar_h - 1),
                     cv2.FONT_HERSHEY_SIMPLEX, 0.30, text_c, 1, cv2.LINE_AA)
@@ -466,7 +389,7 @@ def _draw_biometric_reports_portable(frame, tracks, show_graphs=True):
             card_x = max(10, x - card_w - 14)
 
         _draw_probability_card_portable(frame, card_x, card_y, card_w, card_h, track)
-        cv2.line(frame, (x + w, y + h // 2), (card_x, y + h // 2), track["person_color"], 1, cv2.LINE_AA)
+        cv2.line(frame, (x + w, y + h // 2), (card_x, y + h // 2), track["emotion_color"], 1, cv2.LINE_AA)
     else:
         dock_w = 175
         dock_x = w_f - dock_w - 8
@@ -485,9 +408,9 @@ def _draw_biometric_reports_portable(frame, tracks, show_graphs=True):
             dock_anchor = (dock_x, card_y + card_h // 2)
 
             overlay = frame.copy()
-            cv2.line(overlay, face_anchor, dock_anchor, track["person_color"], 1, cv2.LINE_AA)
-            cv2.circle(overlay, face_anchor, 3, track["person_color"], -1)
-            cv2.circle(overlay, dock_anchor, 3, track["person_color"], -1)
+            cv2.line(overlay, face_anchor, dock_anchor, track["emotion_color"], 1, cv2.LINE_AA)
+            cv2.circle(overlay, face_anchor, 3, track["emotion_color"], -1)
+            cv2.circle(overlay, dock_anchor, 3, track["emotion_color"], -1)
             cv2.addWeighted(overlay, 0.40, frame, 0.60, 0, frame)
 
 
@@ -569,7 +492,6 @@ def run_portable_app():
     print(f"\nCamara ID {cam_idx} activa.")
     print("Controles:")
     print("  * 'q' o ESC : Salir")
-    print("  * 'h'       : Silueta Holográfica Escalonada (Sci-Fi)")
     print("  * 'g'       : Mostrar/Ocultar Gráficas Biométricas")
     print("  * 't'       : Activar/Desactivar Suavizado EMA")
     print("  * 'l'       : Mostrar/Ocultar Puntos Faciales (Landmarks)")
@@ -582,7 +504,6 @@ def run_portable_app():
     paused = False
     use_smoothing   = True
     show_landmarks  = True
-    show_silhouette = True
     show_graphs     = True
     consecutive_failures = 0
     frame_count = 0
@@ -646,24 +567,20 @@ def run_portable_app():
         # Dibujar HUD
         for t in tracks:
             x, y, w, h = t["bbox"]
-            p_color = t["person_color"]
-            p_label = t["person_label"]
+            emo_color  = t["emotion_color"]
+            p_label    = t["person_label"]
 
-            # 1. Silueta irregular escalonada holográfica
-            if show_silhouette:
-                _draw_stepped_silhouette_portable(frame, (x, y, w, h), p_color)
-
-            # 2. Bbox con esquinas y badge
-            cv2.rectangle(frame, (x, y), (x + w, y + h), p_color, 2)
+            # Bbox con esquinas y color de la emoción detectada
+            cv2.rectangle(frame, (x, y), (x + w, y + h), emo_color, 2)
             clen = min(15, w // 4, h // 4)
-            cv2.line(frame, (x, y), (x + clen, y), p_color, 3)
-            cv2.line(frame, (x, y), (x, y + clen), p_color, 3)
-            cv2.line(frame, (x+w, y+h), (x+w-clen, y+h), p_color, 3)
-            cv2.line(frame, (x+w, y+h), (x+w, y+h-clen), p_color, 3)
+            cv2.line(frame, (x, y), (x + clen, y), emo_color, 3)
+            cv2.line(frame, (x, y), (x, y + clen), emo_color, 3)
+            cv2.line(frame, (x+w, y+h), (x+w-clen, y+h), emo_color, 3)
+            cv2.line(frame, (x+w, y+h), (x+w, y+h-clen), emo_color, 3)
 
             badge_text = f"{p_label}: {t['label']} {t['conf']:.0f}%"
             cv2.putText(frame, badge_text, (x, max(20, y - 8)),
-                        cv2.FONT_HERSHEY_DUPLEX, 0.48, p_color, 1, cv2.LINE_AA)
+                        cv2.FONT_HERSHEY_DUPLEX, 0.48, emo_color, 1, cv2.LINE_AA)
 
             if t.get("reid_banner", 0) > 0:
                 cv2.rectangle(frame, (x, max(3, y - 26)), (x + 160, max(21, y - 8)), (0, 160, 80), -1)
@@ -674,7 +591,7 @@ def run_portable_app():
                 for pt in t["landmarks"]:
                     cv2.circle(frame, (int(pt[0]), int(pt[1])), 2, (0, 255, 255), -1, cv2.LINE_AA)
 
-        # 3. Gráficas independientes multi-persona
+        # Gráficas independientes multi-persona
         _draw_biometric_reports_portable(frame, tracks, show_graphs=show_graphs)
 
         curr_time = time.time()
@@ -685,17 +602,13 @@ def run_portable_app():
 
         cv2.rectangle(frame, (0, 0), (w_f, 28), (15, 15, 20), -1)
         ema_str = "EMA:ON" if use_smoothing else "EMA:OFF"
-        holo_str = "HOLO:ON" if show_silhouette else "HOLO:OFF"
-        cv2.putText(frame, f"FPS: {fps:.1f} | Cam [{cam_idx}] | {ema_str} | {holo_str} | {len(tracks)} ACTIVOS | {len(tracker.gallery)} RE-ID",
+        cv2.putText(frame, f"FPS: {fps:.1f} | Cam [{cam_idx}] | {ema_str} | {len(tracks)} ACTIVOS | {len(tracker.gallery)} RE-ID",
                     (10, 19), cv2.FONT_HERSHEY_DUPLEX, 0.38, (0, 220, 255), 1, cv2.LINE_AA)
 
         cv2.imshow(window_name, frame)
         key = cv2.waitKey(1) & 0xFF
         if key == ord("q") or key == 27:
             break
-        elif key == ord("h"):
-            show_silhouette = not show_silhouette
-            print(f"Silueta Holográfica: {'ACTIVADA' if show_silhouette else 'DESACTIVADA'}")
         elif key == ord("g"):
             show_graphs = not show_graphs
             print(f"Gráficas de Emociones: {'VISIBLES' if show_graphs else 'OCULTAS'}")
