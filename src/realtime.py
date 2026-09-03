@@ -523,7 +523,7 @@ def _draw_biometric_reports(
 
 def _draw_hud_header(
     frame: np.ndarray, fps: float, latency_ms: float,
-    use_smoothing: bool, is_cuda: bool, paused: bool,
+    is_cuda: bool, paused: bool,
     num_persons: int = 0, gallery_count: int = 0,
 ) -> None:
     """Barra superior con métricas y estado del sistema."""
@@ -541,14 +541,13 @@ def _draw_hud_header(
     cv2.putText(frame, f"FPS: {fps:.1f} | Lat: {latency_ms:.1f}ms", (w // 2 - 110, 18), font, 0.42, (255, 255, 255), 1, cv2.LINE_AA)
     cv2.putText(frame, "DET: YUNET ONNX", (w // 2 - 110, 34), font, 0.38, (0, 230, 255), 1, cv2.LINE_AA)
 
-    smooth_c = (0, 255, 180) if use_smoothing else (90, 90, 90)
-    cv2.putText(frame, f"EMA: {'ON' if use_smoothing else 'OFF'}", (w - 170, 26), font, 0.40, smooth_c, 1, cv2.LINE_AA)
+    cv2.putText(frame, "EMA: AUTO", (w - 150, 26), font, 0.40, (0, 255, 180), 1, cv2.LINE_AA)
 
     if paused:
         cv2.putText(frame, "[PAUSADO]", (w // 2 - 45, h // 2), font, 0.9, (0, 0, 255), 2, cv2.LINE_AA)
 
 
-def _draw_hud_footer(frame: np.ndarray, angry_threshold: float = 0.50) -> None:
+def _draw_hud_footer(frame: np.ndarray) -> None:
     """Barra inferior con controles interactivos."""
     h, w = frame.shape[:2]
     overlay = frame.copy()
@@ -556,8 +555,8 @@ def _draw_hud_footer(frame: np.ndarray, angry_threshold: float = 0.50) -> None:
     cv2.addWeighted(overlay, 0.85, frame, 0.15, 0, frame)
     cv2.putText(
         frame,
-        f"q:Salir | g:Graficas | t:EMA | l:Landmarks | +/-:Umbral Enojado({angry_threshold:.0%}) | c:Cam | s:Foto",
-        (12, h - 7), cv2.FONT_HERSHEY_SIMPLEX, 0.32, (210, 220, 230), 1, cv2.LINE_AA,
+        "q:Salir | g:Graficas | l:Landmarks | c:Cam | s:Capturar Foto | p:Pausar",
+        (14, h - 7), cv2.FONT_HERSHEY_SIMPLEX, 0.34, (210, 220, 230), 1, cv2.LINE_AA,
     )
 
 
@@ -597,16 +596,13 @@ def run_realtime() -> None:
     print("\n" + "=" * 60)
     print("   [OK] Sistema biométrico activo. Atajos:")
     print("   |-- 'g': Mostrar/Ocultar Gráficas de Emoción")
-    print("   |-- 't': Suavizado Temporal EMA")
     print("   |-- 'l': Puntos Faciales (Landmarks)")
-    print("   |-- '+/-': Ajustar umbral de Enojado en vivo")
-    print("   |-- 's': Capturar foto")
+    print("   |-- 's': Capturar foto (Limpia: solo cámara, rostros y gráficas)")
     print("   |-- 'p': Pausar / Reanudar")
     print("   |-- 'c': Cambiar cámara")
     print("   +-- 'q' / ESC: Salir")
     print("=" * 60)
 
-    use_smoothing   = True
     show_landmarks  = True
     show_graphs     = True
     paused          = False
@@ -616,6 +612,7 @@ def run_realtime() -> None:
     is_cuda         = DEVICE.type == "cuda"
     prev_time       = time.time()
     frame           = None
+    clean_capture   = None
 
     while True:
         if not paused:
@@ -661,7 +658,8 @@ def run_realtime() -> None:
                     "landmarks":  det.get("landmarks"),
                 })
 
-            active_tracks = tracker.update(processed_dets, frame_gray=gray, use_smoothing=use_smoothing)
+            # Suavizado EMA siempre automático
+            active_tracks = tracker.update(processed_dets, frame_gray=gray, use_smoothing=True)
 
             # Renderizado de recuadros, badges y reportes
             for track in active_tracks:
@@ -684,6 +682,9 @@ def run_realtime() -> None:
             # Reportes y gráficas multi-persona
             _draw_biometric_reports(frame, active_tracks, show_graphs=show_graphs)
 
+        # Captura limpia para fotos (solo cámara, recuadros, gráficas y puntos, sin barras de menú)
+        clean_capture = frame.copy()
+
         latency_ms = (time.time() - start_tick) * 1000.0
         curr_time  = time.time()
         elapsed    = curr_time - prev_time
@@ -691,11 +692,12 @@ def run_realtime() -> None:
             fps = 0.9 * fps + 0.1 / elapsed
         prev_time = curr_time
 
+        # Dibujar barras de interfaz en la pantalla de visualización
         _draw_hud_header(
-            frame, fps, latency_ms, use_smoothing, is_cuda, paused,
+            frame, fps, latency_ms, is_cuda, paused,
             num_persons=len(active_tracks), gallery_count=len(tracker.gallery),
         )
-        _draw_hud_footer(frame, angry_threshold=tracker.conf_thresholds[0])
+        _draw_hud_footer(frame)
 
         cv2.imshow(WINDOW_NAME, frame)
 
@@ -706,23 +708,16 @@ def run_realtime() -> None:
         elif key == ord("g"):
             show_graphs = not show_graphs
             print(f"   [GRAFICAS BIOMETRICAS] {'VISIBLES' if show_graphs else 'OCULTAS'}")
-        elif key == ord("t"):
-            use_smoothing = not use_smoothing
-            print(f"   [EMA] {'ACTIVADO' if use_smoothing else 'DESACTIVADO'}")
         elif key == ord("l"):
             show_landmarks = not show_landmarks
             print(f"   [LANDMARKS] {'VISIBLES' if show_landmarks else 'OCULTOS'}")
-        elif key in (ord("+"), ord("=")):
-            tracker.conf_thresholds[0] = min(0.95, tracker.conf_thresholds[0] + 0.05)
-            print(f"   [UMBRAL Enojado] → {tracker.conf_thresholds[0]:.0%}")
-        elif key == ord("-"):
-            tracker.conf_thresholds[0] = max(0.10, tracker.conf_thresholds[0] - 0.05)
-            print(f"   [UMBRAL Enojado] → {tracker.conf_thresholds[0]:.0%}")
         elif key == ord("s"):
             os.makedirs(PLOTS_DIR, exist_ok=True)
             path = os.path.join(PLOTS_DIR, f"screenshot_{frame_count}.png")
-            cv2.imwrite(path, frame)
-            print(f"   [FOTO] Guardada: {path}")
+            # Guardar captura limpia sin menús de botones
+            save_img = clean_capture if clean_capture is not None else frame
+            cv2.imwrite(path, save_img)
+            print(f"   [FOTO LIMPIA] Guardada: {path}")
         elif key == ord("c"):
             cap.release()
             for offset in range(1, 4):

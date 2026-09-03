@@ -493,20 +493,19 @@ def run_portable_app():
     print("Controles:")
     print("  * 'q' o ESC : Salir")
     print("  * 'g'       : Mostrar/Ocultar Gráficas Biométricas")
-    print("  * 't'       : Activar/Desactivar Suavizado EMA")
     print("  * 'l'       : Mostrar/Ocultar Puntos Faciales (Landmarks)")
     print("  * 'c'       : Cambiar de camara")
-    print("  * 's'       : Capturar foto")
+    print("  * 's'       : Capturar foto (Limpia: solo cámara, rostros y gráficas)")
     print("  * 'p'       : Pausar\n")
 
     fps = 60.0
     prev_time = time.time()
     paused = False
-    use_smoothing   = True
     show_landmarks  = True
     show_graphs     = True
     consecutive_failures = 0
     frame_count = 0
+    clean_capture = None
 
     while True:
         if not paused:
@@ -562,7 +561,7 @@ def run_portable_app():
                 landmarks = (f[4:14].reshape((5, 2)) * inv_s).astype(int)
                 processed.append({"bbox": (x, y, w, h), "probs": probs, "landmarks": landmarks})
 
-        tracks = tracker.update(processed, frame_gray=gray, use_smoothing=use_smoothing)
+        tracks = tracker.update(processed, frame_gray=gray, use_smoothing=True)
 
         # Dibujar HUD
         for t in tracks:
@@ -594,6 +593,9 @@ def run_portable_app():
         # Gráficas independientes multi-persona
         _draw_biometric_reports_portable(frame, tracks, show_graphs=show_graphs)
 
+        # Captura limpia para fotos (solo cámara, recuadros, gráficas y puntos, sin barras de menú)
+        clean_capture = frame.copy()
+
         curr_time = time.time()
         elapsed = curr_time - prev_time
         if elapsed > 0:
@@ -601,8 +603,7 @@ def run_portable_app():
         prev_time = curr_time
 
         cv2.rectangle(frame, (0, 0), (w_f, 28), (15, 15, 20), -1)
-        ema_str = "EMA:ON" if use_smoothing else "EMA:OFF"
-        cv2.putText(frame, f"FPS: {fps:.1f} | Cam [{cam_idx}] | {ema_str} | {len(tracks)} ACTIVOS | {len(tracker.gallery)} RE-ID",
+        cv2.putText(frame, f"FPS: {fps:.1f} | Cam [{cam_idx}] | EMA: AUTO | {len(tracks)} ACTIVOS | {len(tracker.gallery)} RE-ID",
                     (10, 19), cv2.FONT_HERSHEY_DUPLEX, 0.38, (0, 220, 255), 1, cv2.LINE_AA)
 
         cv2.imshow(window_name, frame)
@@ -612,9 +613,6 @@ def run_portable_app():
         elif key == ord("g"):
             show_graphs = not show_graphs
             print(f"Gráficas de Emociones: {'VISIBLES' if show_graphs else 'OCULTAS'}")
-        elif key == ord("t"):
-            use_smoothing = not use_smoothing
-            print(f"Suavizado EMA: {'ACTIVADO' if use_smoothing else 'DESACTIVADO'}")
         elif key == ord("l"):
             show_landmarks = not show_landmarks
             print(f"Landmarks: {'VISIBLES' if show_landmarks else 'OCULTOS'}")
@@ -633,8 +631,9 @@ def run_portable_app():
                 print(f"No hay otras camaras disponibles. Volviendo a ID {cam_idx}...")
         elif key == ord("s"):
             fname = f"captura_{int(time.time())}.png"
-            cv2.imwrite(fname, frame)
-            print(f"Foto guardada: {fname}")
+            save_img = clean_capture if clean_capture is not None else frame
+            cv2.imwrite(fname, save_img)
+            print(f"Foto limpia guardada: {fname}")
         elif key == ord("p"):
             paused = not paused
 

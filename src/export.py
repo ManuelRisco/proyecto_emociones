@@ -174,10 +174,10 @@ INSTRUCCIONES:
   2. La ventana es ajustable (puedes arrastrar los bordes o maximizarla).
   3. Controles en pantalla:
        q / ESC : Salir
-       t       : Activar / Desactivar Suavizado Temporal EMA
+       g       : Mostrar / Ocultar Gráficas de Emociones
        l       : Mostrar / Ocultar Puntos Faciales (Landmarks)
        c       : Cambiar camara
-       s       : Guardar captura de pantalla
+       s       : Guardar foto limpia (solo cámara, rostros y gráfica)
        p       : Pausar / Reanudar
 '''
 
