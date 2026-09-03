@@ -26,7 +26,7 @@ setup_utf8()
 ensure_root_in_path()
 
 from src.config import (
-    BEST_MODEL_PATH, DEVICE, EMOTION_EMOJIS, EMOTION_LABELS,
+    BEST_MODEL_PATH, DEVICE, EMOTION_COLORS, EMOTION_EMOJIS, EMOTION_LABELS,
     IMG_SIZE, NUM_CLASSES, PLOTS_DIR,
     YUNET_MODEL_PATH, YUNET_NMS_THRESHOLD, YUNET_SCORE_THRESHOLD,
 )
@@ -300,45 +300,154 @@ def predict_single_image(
     return results
 
 
+FACE_PALETTE_RGB = [
+    (0.12, 0.55, 0.95),  # Rostro 1: Azul Cyan
+    (0.98, 0.45, 0.10),  # Rostro 2: Naranja brillante
+    (0.15, 0.78, 0.35),  # Rostro 3: Verde esmeralda
+    (0.88, 0.20, 0.75),  # Rostro 4: Magenta
+    (0.95, 0.78, 0.10),  # Rostro 5: Amarillo dorado
+    (0.55, 0.35, 0.92),  # Rostro 6: Púrpura
+]
+
+
+def _plot_face_bars(ax, r: dict, face_idx: int, face_color: tuple) -> None:
+    """Renderiza la gráfica de barras de probabilidades para un rostro individual."""
+    sorted_probs = sorted(r["probabilities"].items(), key=lambda kv: kv[1], reverse=True)
+    labels = [l for l, _ in sorted_probs]
+    values = [v for _, v in sorted_probs]
+
+    # Cada barra toma el color característico de su emoción
+    bar_colors = []
+    for lbl in labels:
+        idx = next((k for k, v in EMOTION_LABELS.items() if v == lbl), 6)
+        bgr = EMOTION_COLORS.get(idx, (170, 170, 170))
+        bar_colors.append((bgr[2] / 255.0, bgr[1] / 255.0, bgr[0] / 255.0))
+
+    ax.barh(labels[::-1], values[::-1], color=bar_colors[::-1], edgecolor="gray", alpha=0.9, height=0.6)
+    ax.set_xlabel("Probabilidad (%)", fontsize=10)
+    ax.set_xlim(0, 100)
+    ax.grid(axis="x", alpha=0.3, linestyle="--")
+
+    # Título en el color asignado a este rostro
+    ax.set_title(
+        f"Rostro #{face_idx + 1}: {r['predicted_label'].upper()} ({r['confidence']:.1f}%)",
+        fontsize=11, fontweight="bold", color=face_color, pad=10,
+    )
+
+    # Marco con el color del rostro para asociarlo visualmente al instante
+    for spine in ax.spines.values():
+        spine.set_edgecolor(face_color)
+        spine.set_linewidth(1.8)
+
+    # Porcentajes numéricos al final de cada barra
+    for i, v in enumerate(values[::-1]):
+        ax.text(v + 1.2, i, f"{v:.1f}%", va="center", fontsize=9, fontweight="semibold")
+
+
 def _visualize_prediction(img: np.ndarray, results: list[dict]) -> None:
-    """Genera y guarda una visualización detallada de la predicción."""
-    fig, axes = plt.subplots(1, 2, figsize=(14, 6))
+    """
+    Genera y guarda una visualización completa de la predicción.
+    Regla: Cantidad de rostros detectados = Cantidad de gráficas independientes.
+    Cada rostro se distingue con un color y etiqueta únicos en la imagen y en su gráfica.
+    """
+    from matplotlib.gridspec import GridSpec
 
     img_rgb = cv2.cvtColor(img, cv2.COLOR_BGR2RGB)
-    for r in results:
+    h_img, w_img = img_rgb.shape[:2]
+
+    # 1. Distinguir cada rostro en la imagen con colores y badges individuales
+    for i, r in enumerate(results):
         x, y, w, h = r["bbox"]
-        cv2.rectangle(img_rgb, (x, y), (x+w, y+h), (0, 255, 0), 2)
+        col_rgb = FACE_PALETTE_RGB[i % len(FACE_PALETTE_RGB)]
+        col_255 = tuple(int(c * 255) for c in col_rgb)
+
+        cv2.rectangle(img_rgb, (x, y), (x + w, y + h), col_255, 3)
+
         if r.get("landmarks") is not None:
             for pt in r["landmarks"]:
-                cv2.circle(img_rgb, (int(pt[0]), int(pt[1])), 3, (255, 0, 0), -1)
+                cv2.circle(img_rgb, (int(pt[0]), int(pt[1])), 4, col_255, -1)
+                cv2.circle(img_rgb, (int(pt[0]), int(pt[1])), 2, (255, 255, 255), -1)
 
-    axes[0].imshow(img_rgb)
-    axes[0].set_title("Detección de Rostros (YuNet)", fontsize=12, fontweight="bold")
-    axes[0].axis("off")
+        badge_text = f"Rostro #{i+1}: {r['predicted_label']} {r['confidence']:.0f}%"
+        font = cv2.FONT_HERSHEY_DUPLEX
+        font_scale = max(0.42, min(0.65, w / 180.0))
+        (tw, th), _ = cv2.getTextSize(badge_text, font, font_scale, 1)
 
-    if results:
-        r = results[0]
-        sorted_probs = sorted(r["probabilities"].items(), key=lambda kv: kv[1], reverse=True)
-        labels = [l for l, _ in sorted_probs]
-        values = [v for _, v in sorted_probs]
-        colors = plt.cm.RdYlGn(np.array(values) / 100)
+        badge_y1 = max(0, y - th - 10)
+        badge_y2 = y
+        badge_x2 = min(w_img, x + tw + 14)
 
-        axes[1].barh(labels[::-1], values[::-1], color=colors[::-1], edgecolor="gray", height=0.6)
-        axes[1].set_xlabel("Probabilidad (%)")
-        axes[1].set_title(
-            f"Predicción: {r['predicted_label']} ({r['confidence']:.1f}%)",
-            fontsize=12, fontweight="bold",
-        )
-        axes[1].set_xlim(0, 100)
-        axes[1].grid(axis="x", alpha=0.3)
-        for i, v in enumerate(values[::-1]):
-            axes[1].text(v + 1, i, f"{v:.1f}%", va="center", fontsize=9)
+        cv2.rectangle(img_rgb, (x, badge_y1), (badge_x2, badge_y2), col_255, -1)
+        cv2.putText(img_rgb, badge_text, (x + 6, badge_y2 - 5), font, font_scale, (255, 255, 255), 1, cv2.LINE_AA)
 
-    plt.tight_layout()
+    n_faces = len(results)
+
+    # 2. Generar tantas gráficas independientes como rostros detectados
+    if n_faces == 0:
+        fig, ax = plt.subplots(1, 1, figsize=(10, 6))
+        ax.imshow(img_rgb)
+        ax.set_title("No se detectaron rostros", fontsize=13, fontweight="bold")
+        ax.axis("off")
+
+    elif n_faces == 1:
+        fig = plt.figure(figsize=(15, 6))
+        gs = GridSpec(1, 2, width_ratios=[1.3, 1], wspace=0.25)
+
+        ax_img = fig.add_subplot(gs[0, 0])
+        ax_img.imshow(img_rgb)
+        ax_img.set_title("Detección de Rostros (YuNet)", fontsize=13, fontweight="bold")
+        ax_img.axis("off")
+
+        ax_bar = fig.add_subplot(gs[0, 1])
+        _plot_face_bars(ax_bar, results[0], face_idx=0, face_color=FACE_PALETTE_RGB[0])
+
+    elif n_faces == 2:
+        # Lado a lado: Imagen y 2 gráficas de barras independientes
+        fig = plt.figure(figsize=(19, 6.5))
+        gs = GridSpec(1, 3, width_ratios=[1.35, 1, 1], wspace=0.28)
+
+        ax_img = fig.add_subplot(gs[0, 0])
+        ax_img.imshow(img_rgb)
+        ax_img.set_title("Detección de Rostros (YuNet) — 2 Sujetos", fontsize=13, fontweight="bold")
+        ax_img.axis("off")
+
+        ax_bar1 = fig.add_subplot(gs[0, 1])
+        _plot_face_bars(ax_bar1, results[0], face_idx=0, face_color=FACE_PALETTE_RGB[0])
+
+        ax_bar2 = fig.add_subplot(gs[0, 2])
+        _plot_face_bars(ax_bar2, results[1], face_idx=1, face_color=FACE_PALETTE_RGB[1])
+
+    elif n_faces == 3:
+        fig = plt.figure(figsize=(24, 6.5))
+        gs = GridSpec(1, 4, width_ratios=[1.35, 1, 1, 1], wspace=0.30)
+
+        ax_img = fig.add_subplot(gs[0, 0])
+        ax_img.imshow(img_rgb)
+        ax_img.set_title("Detección de Rostros (YuNet) — 3 Sujetos", fontsize=13, fontweight="bold")
+        ax_img.axis("off")
+
+        for i in range(3):
+            ax_bar = fig.add_subplot(gs[0, i + 1])
+            _plot_face_bars(ax_bar, results[i], face_idx=i, face_color=FACE_PALETTE_RGB[i % len(FACE_PALETTE_RGB)])
+
+    else:
+        # 4 o más personas: Imagen a la izquierda y columna de gráficas independientes a la derecha
+        fig = plt.figure(figsize=(18, max(7, 3.2 * n_faces)))
+        gs = GridSpec(n_faces, 2, width_ratios=[1.35, 1], hspace=0.38, wspace=0.25)
+
+        ax_img = fig.add_subplot(gs[:, 0])
+        ax_img.imshow(img_rgb)
+        ax_img.set_title(f"Detección de Rostros (YuNet) — {n_faces} Sujetos", fontsize=13, fontweight="bold")
+        ax_img.axis("off")
+
+        for i in range(n_faces):
+            ax_bar = fig.add_subplot(gs[i, 1])
+            _plot_face_bars(ax_bar, results[i], face_idx=i, face_color=FACE_PALETTE_RGB[i % len(FACE_PALETTE_RGB)])
+
     save_path = os.path.join(PLOTS_DIR, "prediccion_imagen.png")
     plt.savefig(save_path, dpi=150, bbox_inches="tight")
     plt.close()
-    print(f"\n   [GRAFICA] Visualización guardada en: {save_path}")
+    print(f"\n   [GRAFICA] Reporte generado ({n_faces} graficas independientes). Guardado en: {save_path}")
 
 
 # ──────────────────────────────────────────────────────────────────────────────
