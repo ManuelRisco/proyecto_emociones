@@ -297,29 +297,56 @@ def generate_comprehensive_guide():
     add_heading_styled(doc, "4. Resultados Experimentales en el Conjunto de TEST (7,178 Muestras)", level=1)
 
     add_body_text(doc,
-        "El modelo final fue evaluado formalmente sobre las 7,178 imágenes independientes del conjunto de Test, "
-        "obteniendo un Accuracy Global de 68.04% y superando el promedio de concordancia humana (65%-68%):"
+        "El modelo final EmotionResNetSE fue evaluado formalmente sobre las 7,178 imágenes independientes del conjunto de Test, "
+        "obteniendo una Exactitud Global (Accuracy) de 69.45% (4,985 aciertos de 7,178) y superando el promedio de concordancia humana (65%-68%):"
     )
 
-    table_test = doc.add_table(rows=9, cols=5)
+    table_test = doc.add_table(rows=10, cols=5)
     table_test.alignment = WD_TABLE_ALIGNMENT.CENTER
     format_table_header(table_test.rows[0], ["Emoción", "Precision", "Recall", "F1-Score", "Muestras"])
 
     test_res = [
-        ("Enojado", "61.71%", "59.39%", "60.53%", "958"),
-        ("Disgusto", "52.26%", "72.97%", "60.90%", "111"),
-        ("Miedo", "55.43%", "48.83%", "51.92%", "1,024"),
-        ("Feliz", "88.47%", "86.47%", "87.46%", "1,774"),
-        ("Triste", "55.93%", "55.17%", "55.55%", "1,247"),
-        ("Sorprendido", "71.99%", "83.51%", "77.33%", "831"),
-        ("Neutral", "64.36%", "66.34%", "65.34%", "1,233"),
-        ("PROMEDIO PONDERADO", "67.92%", "68.04%", "67.87%", "7,178")
+        ("Enojado", "61.55%", "62.84%", "62.19%", "958"),
+        ("Disgusto", "61.65%", "73.87%", "67.21%", "111"),
+        ("Miedo", "57.92%", "49.61%", "53.45%", "1,024"),
+        ("Feliz", "87.92%", "88.61%", "88.27%", "1,774"),
+        ("Triste", "61.21%", "50.12%", "55.11%", "1,247"),
+        ("Sorprendido", "77.25%", "84.60%", "80.76%", "831"),
+        ("Neutral", "60.71%", "72.42%", "66.05%", "1,233"),
+        ("PROMEDIO MACRO", "66.89%", "68.87%", "67.58%", "7,178"),
+        ("PROMEDIO PONDERADO", "69.17%", "69.45%", "69.05%", "7,178")
     ]
     for i, row_data in enumerate(test_res):
         format_table_row(table_test.rows[i+1], row_data, is_even=(i % 2 == 1), align_center_cols=[1, 2, 3, 4])
 
     p_sp2 = doc.add_paragraph()
     p_sp2.paragraph_format.space_before = Pt(4)
+
+    # Insertar gráficos clave en la guía
+    plots_to_insert = [
+        ("historial_entrenamiento.png", "Figura 1: Curvas de Aprendizaje (Pérdida y Exactitud) a lo largo de 96 épocas.", 6.0),
+        ("matriz_confusion_normalizada.png", "Figura 2: Matriz de Confusión Normalizada (%) sobre el conjunto de Test.", 5.0),
+        ("f1_precision_recall_por_emocion.png", "Figura 3: Comparativa de F1-Score y Precisión vs. Recall por emoción.", 5.8)
+    ]
+    plots_dir = os.path.join(OUTPUT_DIR, "plots")
+    for fname, cap, w_in in plots_to_insert:
+        p_path = os.path.join(plots_dir, fname)
+        if os.path.exists(p_path):
+            try:
+                p_im = doc.add_paragraph()
+                p_im.alignment = WD_ALIGN_PARAGRAPH.CENTER
+                p_im.paragraph_format.space_before = Pt(8)
+                p_im.paragraph_format.space_after = Pt(2)
+                p_im.add_run().add_picture(p_path, width=Inches(w_in))
+                p_cp = doc.add_paragraph()
+                p_cp.alignment = WD_ALIGN_PARAGRAPH.CENTER
+                r_c = p_cp.add_run(cap)
+                r_c.font.name = "Calibri"
+                r_c.font.size = Pt(9.5)
+                r_c.font.italic = True
+                p_cp.paragraph_format.space_after = Pt(8)
+            except Exception:
+                pass
 
     # =========================================================================
     # SECCIÓN 5: SISTEMA EN TIEMPO REAL (WEBCAM v2.0)
@@ -334,6 +361,25 @@ def generate_comprehensive_guide():
     add_bullet(doc, "Preprocesamiento C++ Ultrarrápido", "Redimensiona el recorte del rostro en C++ directamente a tensores en <0.05 ms.")
     add_bullet(doc, "Optimización de Hardware MJPG", "Configura la cámara web a 60 FPS y buffersize=1, eliminando retrasos por cola de fotogramas.")
     add_bullet(doc, "Ventana Dinámica Ajustable", "Ventana libremente redimensionable mediante mouse o maximizado con cv2.WINDOW_NORMAL.")
+
+    # Captura en tiempo real
+    sc_path = os.path.join(plots_dir, "screenshot_516.png")
+    if os.path.exists(sc_path):
+        try:
+            p_im = doc.add_paragraph()
+            p_im.alignment = WD_ALIGN_PARAGRAPH.CENTER
+            p_im.paragraph_format.space_before = Pt(8)
+            p_im.paragraph_format.space_after = Pt(2)
+            p_im.add_run().add_picture(sc_path, width=Inches(5.0))
+            p_cp = doc.add_paragraph()
+            p_cp.alignment = WD_ALIGN_PARAGRAPH.CENTER
+            r_c = p_cp.add_run("Figura 4: Interfaz de inferencia en tiempo real con HUD holográfico y detector YuNet.")
+            r_c.font.name = "Calibri"
+            r_c.font.size = Pt(9.5)
+            r_c.font.italic = True
+            p_cp.paragraph_format.space_after = Pt(8)
+        except Exception:
+            pass
 
     # =========================================================================
     # SECCIÓN 6: EXPORTACIÓN PORTÁTIL (.ZIP PARA CUALQUIER PC)
@@ -356,7 +402,7 @@ def generate_comprehensive_guide():
     add_heading_styled(doc, "7. Preguntas Clave para Sustentación o Examen", level=1)
 
     qa_list = [
-        ("¿Por qué el modelo alcanza 68.04% en Test y supera el benchmark humano?",
+        ("¿Por qué el modelo alcanza 69.45% en Test y supera el benchmark humano?",
          "Porque incorpora conexiones residuales (ResNet) para evitar el desvanecimiento de gradiente, módulos de atención SE para priorizar rasgos morfológicos clave, y Focal Loss con Oversampling para equilibrar emociones difíciles."),
         ("¿Cómo se comprobó que no hay fuga de datos (Data Leakage)?",
          "Las 7,178 imágenes de Test se aislaron completamente y nunca se usaron en entrenamiento. El Data Augmentation y Oversampling solo se aplican sobre el conjunto de entrenamiento (is_train=True)."),

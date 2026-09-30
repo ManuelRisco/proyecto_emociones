@@ -1,20 +1,20 @@
 EVALUACION DEL MODELO — CONJUNTO DE TEST
 ============================================================
-Accuracy General : 69.45%
+Accuracy General : 68.14%
 Total muestras   : 7,178
 
 Reporte de Clasificacion:
               precision    recall  f1-score   support
 
-     Enojado     0.6155    0.6284    0.6219       958
-    Disgusto     0.6165    0.7387    0.6721       111
-       Miedo     0.5792    0.4961    0.5345      1024
-       Feliz     0.8792    0.8861    0.8827      1774
-      Triste     0.6121    0.5012    0.5511      1247
- Sorprendido     0.7725    0.8460    0.8076       831
-     Neutral     0.6071    0.7242    0.6605      1233
+     Enojado     0.6300    0.5616    0.5938       958
+    Disgusto     0.6750    0.7297    0.7013       111
+       Miedo     0.5458    0.4941    0.5187      1024
+       Feliz     0.8719    0.8782    0.8750      1774
+      Triste     0.5600    0.5317    0.5455      1247
+ Sorprendido     0.7609    0.8424    0.7995       831
+     Neutral     0.6097    0.6853    0.6453      1233
 
-    accuracy                         0.6945      7178
-   macro avg     0.6689    0.6887    0.6758      7178
-weighted avg     0.6917    0.6945    0.6905      7178
+    accuracy                         0.6814      7178
+   macro avg     0.6647    0.6747    0.6684      7178
+weighted avg     0.6780    0.6814    0.6785      7178
 

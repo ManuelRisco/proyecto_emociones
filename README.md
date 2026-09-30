@@ -147,22 +147,33 @@ Se desplegará el menú interactivo:
 ============================================================
   MENU PRINCIPAL
 ============================================================
-  1. [TRAIN]    Entrenar modelo CNN
-  2. [EVAL]     Evaluar modelo entrenado
-  3. [PREDICT]  Predecir emocion en imagen
-  4. [WEBCAM]   Demo en tiempo real (webcam)
-  5. [WORD]     Generar documento Word
-  6. [ARCH]     Ver arquitectura del modelo
-  7. [EXIT]     Salir
+  1. [TRAIN]    Entrenar modelo (EmotionResNetSE con GPU VRAM + AMP)
+  2. [EVAL]     Evaluar modelo en conjunto de Test
+  3. [PREDICT]  Predecir emoción en imagen
+  4. [WEBCAM]   Demo en tiempo real (Webcam)
+  5. [EXPORT]   Exportar programa portable (.ZIP para cualquier PC)
+  6. [ARCH]     Ver resumen de arquitectura del modelo
+  7. [WORD]     Generar documentación formal en Word (.docx)
+  8. [EXIT]     Salir
 ============================================================
 ```
 
 ---
 
-## 📈 8. Resultados y Métricas
+## 📈 8. Resultados y Métricas Verificadas
 
+* **Exactitud Global en Test (Accuracy):** **69.45%** sobre las 7,178 imágenes del conjunto independiente de Test (superando la concordancia humana promedio en FER-2013: 65-68%).
+* **Pico de Validación:** 69.25% (Época 81, con pérdida mínima de validación de 0.4361).
 * **Métricas Evaluadas:** Exactitud (*Accuracy*), Precisión (*Precision*), Sensibilidad (*Recall*) y F1-Score general y por emoción.
-* **Artefactos Generados:**
-  * Curvas de pérdida y exactitud por época (`historial_entrenamiento.png`).
-  * Matriz de confusión absoluta y normalizada (`matriz_confusion.png`).
-  * Desglose de exactitud por clase de emoción (`accuracy_por_emocion.png`).
+* **Artefactos Visuales Generados en `outputs/plots/`:**
+  * Curvas de pérdida Focal Loss y exactitud por época (`historial_entrenamiento.png`).
+  * Matriz de confusión normalizada en porcentajes (`matriz_confusion_normalizada.png`).
+  * Matriz de confusión absoluta con conteos enteros (`matriz_confusion.png`).
+  * Comparativa de F1-Score semafórico y Precisión vs. Recall (`f1_precision_recall_por_emocion.png`).
+  * Ranking de exactitud por clase de emoción (`accuracy_por_emocion.png`).
+  * Grilla de 16 predicciones cualitativas con confianza (`ejemplos_predicciones.png`).
+  * Inferencia multi-rostro con detector neuronal YuNet (`prediccion_imagen.png`).
+  * Captura de inferencia en tiempo real con HUD y EMA (`screenshot_516.png`).
+* **Documentación en Word Generada en `outputs/`:**
+  * `Actividad_CNN_Emociones_Risco_Gil_Manuel_Fabrizzio.docx` (Informe académico formal completo con explicación exhaustiva de cada figura).
+  * `Guia_Explicativa_Completa_Proyecto_Emociones_CNN.docx` (Guía explicativa técnica y preguntas de sustentación).

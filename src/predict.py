@@ -19,25 +19,25 @@ matplotlib.use("Agg")
 import matplotlib.pyplot as plt
 import numpy as np
 import torch
-from PIL import Image
 
-from src.utils import ensure_root_in_path, get_inference_transform, setup_utf8
+from src.utils import ensure_root_in_path, setup_utf8
 setup_utf8()
 ensure_root_in_path()
 
 from src.config import (
-    BEST_MODEL_PATH, DEVICE, EMOTION_COLORS, EMOTION_EMOJIS, EMOTION_LABELS,
+    BEST_MODEL_PATH, DEVICE, EMOTION_COLORS, EMOTION_CONFIDENCE_THRESHOLDS,
+    EMOTION_EMOJIS, EMOTION_LABELS, EMOTION_SENSITIVITY_BOOST,
     IMG_SIZE, NUM_CLASSES, PLOTS_DIR,
     YUNET_MODEL_PATH, YUNET_NMS_THRESHOLD, YUNET_SCORE_THRESHOLD,
 )
-from src.model import EmotionResNetSE, build_model
+from src.model import build_model
 
 
 # ──────────────────────────────────────────────────────────────────────────────
 # 1. CARGADOR INTELIGENTE DE MODELOS
 # ──────────────────────────────────────────────────────────────────────────────
 
-def load_model(model_path: str = BEST_MODEL_PATH) -> EmotionResNetSE:
+def load_model(model_path: str = BEST_MODEL_PATH) -> torch.nn.Module:
     """
     Carga el modelo entrenado desde un checkpoint .pth.
 
@@ -61,23 +61,24 @@ def load_model(model_path: str = BEST_MODEL_PATH) -> EmotionResNetSE:
         )
 
     checkpoint = torch.load(model_path, map_location=DEVICE, weights_only=False)
-    state_dict = checkpoint.get("model_state_dict", checkpoint)
+    state_dict = checkpoint.get("model_state_dict", checkpoint) if isinstance(checkpoint, dict) else checkpoint
 
-    # Detección de arquitectura por claves del state_dict
-    arch = checkpoint.get("arch", None)
+    # Manejar modelos compilados con torch.compile (prefijo "_orig_mod.")
+    clean_state = {k.replace("_orig_mod.", ""): v for k, v in state_dict.items()}
+
+    # Detección de arquitectura por claves del state_dict limpio
+    arch = checkpoint.get("arch", None) if isinstance(checkpoint, dict) else None
     if arch is None:
         arch = "resnet_se" if any(
-            k.startswith(("stage1", "stem")) for k in state_dict.keys()
+            k.startswith(("stage1", "stem")) for k in clean_state.keys()
         ) else "cnn_clasica"
 
     model = build_model(arch=arch, num_classes=NUM_CLASSES).to(DEVICE)
-    # Manejar modelos compilados con torch.compile (prefijo "_orig_mod.")
-    clean_state = {k.replace("_orig_mod.", ""): v for k, v in state_dict.items()}
     model.load_state_dict(clean_state, strict=False)
     model.eval()
 
-    val_acc   = checkpoint.get("val_acc")
-    epoch     = checkpoint.get("epoch")
+    val_acc   = checkpoint.get("val_acc") if isinstance(checkpoint, dict) else None
+    epoch     = checkpoint.get("epoch") if isinstance(checkpoint, dict) else None
     acc_info  = f" (Val Acc: {val_acc:.2f}%)" if val_acc is not None else ""
     ep_info   = f" [Época {epoch}]"           if epoch  is not None else ""
     print(f"   [OK] Modelo cargado: {model.__class__.__name__} ({arch.upper()}){ep_info}{acc_info}")
@@ -105,8 +106,8 @@ class FaceDetector:
         self._init_detector()
 
     def _ensure_yunet_model(self) -> None:
-        """Descarga el modelo YuNet ONNX si no existe localmente."""
-        if not os.path.exists(YUNET_MODEL_PATH):
+        """Descarga el modelo YuNet ONNX si no existe localmente o si está incompleto."""
+        if not os.path.exists(YUNET_MODEL_PATH) or os.path.getsize(YUNET_MODEL_PATH) < 10000:
             print("   [DOWNLOAD] Descargando modelo YuNet (~230 KB)...")
             url = (
                 "https://github.com/opencv/opencv_zoo/raw/main/models/"
@@ -118,6 +119,11 @@ class FaceDetector:
                 print(f"   [OK] YuNet descargado: {YUNET_MODEL_PATH}")
             except Exception as e:
                 print(f"   [!] Error al descargar YuNet: {e}")
+                if os.path.exists(YUNET_MODEL_PATH) and os.path.getsize(YUNET_MODEL_PATH) < 10000:
+                    try:
+                        os.remove(YUNET_MODEL_PATH)
+                    except OSError:
+                        pass
 
     def _init_detector(self) -> None:
         """Inicializa el detector neuronal YuNet."""
@@ -147,6 +153,9 @@ class FaceDetector:
         Returns:
             Lista de dicts: [{'bbox': (x,y,w,h), 'confidence': float, 'landmarks': ndarray|None}]
         """
+        if image_bgr is None or image_bgr.size == 0:
+            return []
+
         h_img, w_img = image_bgr.shape[:2]
         results = []
 
@@ -205,8 +214,17 @@ def align_and_crop_face(
     2. CLAHE local en 4x4 tiles: Disipa sombras duras y destellos de lámparas laterales.
     3. Estandarización canónica Z-score: Fija la media a 128 y std a 50 (invarianza a brillo).
     """
-    x, y, w, h = bbox
+    if frame_gray is None or frame_gray.size == 0:
+        return torch.zeros((1, 1, target_size, target_size), device=DEVICE, dtype=torch.float32)
+
     h_f, w_f = frame_gray.shape[:2]
+    x, y, w, h = bbox
+
+    # Clamping seguro de coordenadas para evitar slices negativos o fuera de imagen
+    x1 = max(0, min(w_f, int(x)))
+    y1 = max(0, min(h_f, int(y)))
+    x2 = max(0, min(w_f, int(x + w)))
+    y2 = max(0, min(h_f, int(y + h)))
 
     # Nivelación afín por inclinación de ojos
     if landmarks is not None and len(landmarks) >= 2:
@@ -220,18 +238,17 @@ def align_and_crop_face(
             center = (float(x + w / 2.0), float(y + h / 2.0))
             M = cv2.getRotationMatrix2D(center, angle, 1.0)
             rotated = cv2.warpAffine(frame_gray, M, (w_f, h_f), flags=cv2.INTER_LINEAR, borderMode=cv2.BORDER_REFLECT)
-            x1 = max(0, min(w_f - 1, x))
-            y1 = max(0, min(h_f - 1, y))
-            x2 = max(0, min(w_f, x + w))
-            y2 = max(0, min(h_f, y + h))
-            face = rotated[y1:y2, x1:x2] if (x2 > x1 and y2 > y1) else frame_gray[y:y+h, x:x+w]
+            face = rotated[y1:y2, x1:x2] if (x2 > x1 and y2 > y1) else np.zeros((target_size, target_size), dtype=np.uint8)
         else:
-            face = frame_gray[y:y+h, x:x+w]
+            face = frame_gray[y1:y2, x1:x2] if (x2 > x1 and y2 > y1) else np.zeros((target_size, target_size), dtype=np.uint8)
     else:
-        face = frame_gray[y:y+h, x:x+w]
+        face = frame_gray[y1:y2, x1:x2] if (x2 > x1 and y2 > y1) else np.zeros((target_size, target_size), dtype=np.uint8)
 
-    if face.shape[0] != target_size or face.shape[1] != target_size:
-        face = cv2.resize(face, (target_size, target_size), interpolation=cv2.INTER_AREA)
+    if face.size == 0:
+        face = np.zeros((target_size, target_size), dtype=np.uint8)
+    elif face.shape[0] != target_size or face.shape[1] != target_size:
+        interp = cv2.INTER_AREA if (face.shape[0] >= target_size and face.shape[1] >= target_size) else cv2.INTER_LINEAR
+        face = cv2.resize(face, (target_size, target_size), interpolation=interp)
 
     # CLAHE local adaptativo para nivelar sombras de lámpara
     clahe = cv2.createCLAHE(clipLimit=2.0, tileGridSize=(4, 4))
@@ -248,6 +265,8 @@ def align_and_crop_face(
 
 def preprocess_face(face_img: np.ndarray) -> torch.Tensor:
     """Compatibilidad: preprocesa un recorte directo de rostro."""
+    if face_img is None or face_img.size == 0:
+        return torch.zeros((1, 1, IMG_SIZE, IMG_SIZE), device=DEVICE, dtype=torch.float32)
     if len(face_img.shape) == 3:
         face_img = cv2.cvtColor(face_img, cv2.COLOR_BGR2GRAY)
     h, w = face_img.shape[:2]
@@ -260,7 +279,7 @@ def preprocess_face(face_img: np.ndarray) -> torch.Tensor:
 
 def predict_single_image(
     image_path: str,
-    model: EmotionResNetSE | None = None,
+    model: torch.nn.Module | None = None,
     detector: FaceDetector | None = None,
 ) -> list[dict] | None:
     """
@@ -296,6 +315,8 @@ def predict_single_image(
     gray    = cv2.cvtColor(img, cv2.COLOR_BGR2GRAY)
     results = []
 
+    model_device = next(model.parameters()).device
+
     for i, det in enumerate(detections):
         x, y, w, h = det["bbox"]
         if w < 16 or h < 16:
@@ -306,11 +327,13 @@ def predict_single_image(
 
         # Test-Time Augmentation (TTA con flip horizontal para máxima estabilidad y precisión)
         tensor_flip = torch.flip(tensor, dims=[-1])
-        batch_tta = torch.cat([tensor, tensor_flip], dim=0)
+        batch_tta = torch.cat([tensor, tensor_flip], dim=0).to(model_device)
         with torch.no_grad():
             outputs = model(batch_tta)
             probs_batch = torch.softmax(outputs, dim=1).cpu().numpy()
             raw_probs = (0.65 * probs_batch[0] + 0.35 * probs_batch[1]).copy()
+            if np.isnan(raw_probs).any():
+                raw_probs = np.nan_to_num(raw_probs, nan=1.0 / NUM_CLASSES)
 
         # Aplicar multiplicadores de sensibilidad adaptativa
         boosted = raw_probs.copy()
@@ -335,7 +358,9 @@ def predict_single_image(
                 boosted[0] *= factor
 
         sum_b = boosted.sum()
-        if sum_b > 0:
+        if not np.isfinite(sum_b) or sum_b <= 0:
+            boosted = np.ones(NUM_CLASSES) / NUM_CLASSES
+        else:
             boosted /= sum_b
 
         # Resolución con umbrales de confianza
@@ -352,6 +377,7 @@ def predict_single_image(
 
         pred_label = EMOTION_LABELS[pred_idx]
         confidence = float(boosted[pred_idx]) * 100
+        emoji = EMOTION_EMOJIS.get(pred_idx, "")
 
         result = {
             "face_index":      i,
@@ -369,7 +395,7 @@ def predict_single_image(
         results.append(result)
 
         print(f"\n   {'─' * 45}")
-        print(f"   Rostro #{i+1}: {pred_label} ({confidence:.1f}%) [Det: {det['confidence']*100:.0f}%]")
+        print(f"   Rostro #{i+1}: {pred_label} {emoji} ({confidence:.1f}%) [Det: {det['confidence']*100:.0f}%]")
         print(f"   {'─' * 45}")
         for label, prob in sorted(result["probabilities"].items(), key=lambda kv: kv[1], reverse=True):
             print(f"     {label:>12}: {prob:5.1f}% {'=' * int(prob / 2)}")
@@ -419,7 +445,7 @@ def _plot_face_bars(ax, r: dict, face_idx: int, face_color: tuple) -> None:
 
     # Porcentajes numéricos al final de cada barra
     for i, v in enumerate(values[::-1]):
-        ax.text(v + 1.2, i, f"{v:.1f}%", va="center", fontsize=9, fontweight="semibold")
+        ax.text(v + 1.2, i, f"{v:.1f}%", va="center", fontsize=9, fontweight="bold")
 
 
 def _visualize_prediction(img: np.ndarray, results: list[dict]) -> None:
@@ -451,12 +477,21 @@ def _visualize_prediction(img: np.ndarray, results: list[dict]) -> None:
         font_scale = max(0.42, min(0.65, w / 180.0))
         (tw, th), _ = cv2.getTextSize(badge_text, font, font_scale, 1)
 
-        badge_y1 = max(0, y - th - 10)
-        badge_y2 = y
+        badge_x1 = max(0, x)
         badge_x2 = min(w_img, x + tw + 14)
 
-        cv2.rectangle(img_rgb, (x, badge_y1), (badge_x2, badge_y2), col_255, -1)
-        cv2.putText(img_rgb, badge_text, (x + 6, badge_y2 - 5), font, font_scale, (255, 255, 255), 1, cv2.LINE_AA)
+        # Si el rostro está muy cerca del borde superior, ubicar la etiqueta debajo del bbox
+        if y - th - 12 >= 0:
+            badge_y1 = y - th - 12
+            badge_y2 = y
+            text_y   = y - 4
+        else:
+            badge_y1 = y + h
+            badge_y2 = min(h_img, y + h + th + 12)
+            text_y   = min(h_img - 2, badge_y1 + th + 4)
+
+        cv2.rectangle(img_rgb, (badge_x1, badge_y1), (badge_x2, badge_y2), col_255, -1)
+        cv2.putText(img_rgb, badge_text, (badge_x1 + 6, text_y), font, font_scale, (255, 255, 255), 1, cv2.LINE_AA)
 
     n_faces = len(results)
 
@@ -522,9 +557,10 @@ def _visualize_prediction(img: np.ndarray, results: list[dict]) -> None:
             ax_bar = fig.add_subplot(gs[i, 1])
             _plot_face_bars(ax_bar, results[i], face_idx=i, face_color=FACE_PALETTE_RGB[i % len(FACE_PALETTE_RGB)])
 
+    os.makedirs(PLOTS_DIR, exist_ok=True)
     save_path = os.path.join(PLOTS_DIR, "prediccion_imagen.png")
     plt.savefig(save_path, dpi=150, bbox_inches="tight")
-    plt.close()
+    plt.close(fig)
     print(f"\n   [GRAFICA] Reporte generado ({n_faces} graficas independientes). Guardado en: {save_path}")
 
 
@@ -539,7 +575,12 @@ def predict_interactive() -> None:
     print("=" * 60)
     print("   Cargando modelo y detector neuronal...")
 
-    model    = load_model()
+    try:
+        model = load_model()
+    except FileNotFoundError as e:
+        print(e)
+        return
+
     detector = FaceDetector()
 
     while True:

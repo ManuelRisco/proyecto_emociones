@@ -57,7 +57,8 @@ def print_menu() -> None:
     print("  4. Iniciar reconocimiento en tiempo real (Webcam)")
     print("  5. Exportar programa portable (.ZIP para cualquier PC)")
     print("  6. Ver resumen de arquitectura del modelo")
-    print("  7. Salir")
+    print("  7. Generar documentación formal en Word (.docx)")
+    print("  8. Salir")
     print("-" * 65)
 
 
@@ -97,6 +98,11 @@ def option_show_architecture() -> None:
     get_model_summary(model)
 
 
+def option_word() -> None:
+    from scripts.docs.generate_document import generate_word_document
+    generate_word_document()
+
+
 # ──────────────────────────────────────────────────────────────────────────────
 # BUCLE PRINCIPAL
 # ──────────────────────────────────────────────────────────────────────────────
@@ -108,6 +114,7 @@ _MENU_OPTIONS = {
     "4": option_realtime,
     "5": option_export,
     "6": option_show_architecture,
+    "7": option_word,
 }
 
 
@@ -118,12 +125,12 @@ def main() -> None:
         print_menu()
 
         try:
-            choice = input("Selecciona una opción (1-7): ").strip()
+            choice = input("Selecciona una opción (1-8): ").strip()
         except (KeyboardInterrupt, EOFError):
             print("\nPrograma finalizado.")
             break
 
-        if choice == "7":
+        if choice == "8":
             print("Programa finalizado.")
             break
 
