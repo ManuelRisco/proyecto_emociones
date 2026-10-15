@@ -67,6 +67,72 @@ EMOTION_COLORS = {
 
 NUM_CLASSES = len(EMOTION_LABELS)
 
+# ── Mapeo Pedagógico de las 7 Emociones con la Problemática Académica ─────────
+# Justificación del significado de cada etiqueta en el aula ante el jurado:
+ACADEMIC_EMOTION_MAPPING = {
+    0: {  # Enojado (Enojo)
+        "dataset_emotion":     "Enojo",
+        "academic_indicator":  "Frustración / Incomprensión",
+        "short_indicator":     "Frustración",
+        "justification":       "Surge cuando el estudiante no comprende un ejercicio o enfrenta dificultades técnicas/conceptuales.",
+    },
+    1: {  # Disgusto
+        "dataset_emotion":     "Disgusto",
+        "academic_indicator":  "Ansiedad / Rechazo a la tarea",
+        "short_indicator":     "Rechazo Tarea",
+        "justification":       "Asociado al estrés previo a una evaluación, sobrecarga académica o disgusto por la dinámica.",
+    },
+    2: {  # Miedo (Temor)
+        "dataset_emotion":     "Temor",
+        "academic_indicator":  "Ansiedad / Rechazo a la tarea",
+        "short_indicator":     "Ansiedad",
+        "justification":       "Asociado al estrés previo a una evaluación, sobrecarga académica o disgusto por la dinámica.",
+    },
+    3: {  # Feliz (Alegría)
+        "dataset_emotion":     "Alegría",
+        "academic_indicator":  "Compromiso (Engagement) / Satisfacción",
+        "short_indicator":     "Engagement",
+        "justification":       "Refleja un ambiente de aprendizaje receptivo y comprensión clara del tema.",
+    },
+    4: {  # Triste (Tristeza)
+        "dataset_emotion":     "Tristeza",
+        "academic_indicator":  "Desmotivación / Agotamiento",
+        "short_indicator":     "Desmotivación",
+        "justification":       "La acumulación continua de esta etiqueta sugiere fatiga o desánimo frente al material.",
+    },
+    5: {  # Sorprendido (Sorpresa)
+        "dataset_emotion":     "Sorpresa",
+        "academic_indicator":  "Comprensión repentina (Insight) o Asombro",
+        "short_indicator":     "Insight / Asombro",
+        "justification":       "Indica momentos de alto impacto en la explicación o dinamismo en la clase.",
+    },
+    6: {  # Neutral
+        "dataset_emotion":     "Neutral",
+        "academic_indicator":  "Atención / Estado de concentración",
+        "short_indicator":     "Atención / Concentración",
+        "justification":       "Representa el estado base de escucha o lectura fluida.",
+    },
+}
+
+
+def get_academic_indicator(emotion_idx: int) -> str:
+    """Retorna el indicador académico asociado a la emoción."""
+    info = ACADEMIC_EMOTION_MAPPING.get(emotion_idx)
+    return info["academic_indicator"] if info else "Atención"
+
+
+def get_academic_short_indicator(emotion_idx: int) -> str:
+    """Retorna la etiqueta corta del indicador académico para interfaces y badges."""
+    info = ACADEMIC_EMOTION_MAPPING.get(emotion_idx)
+    return info["short_indicator"] if info else "Atención"
+
+
+def get_academic_justification(emotion_idx: int) -> str:
+    """Retorna la justificación pedagógica en aula según la problemática."""
+    info = ACADEMIC_EMOTION_MAPPING.get(emotion_idx)
+    return info["justification"] if info else ""
+
+
 # ── Imagen y entrenamiento ────────────────────────────────────────────────────
 IMG_SIZE  = 48
 BATCH_SIZE = 256              # RTX 5060 Ti (8 GB VRAM): batch 256 con uint8 ocupa ~57 MB → OK

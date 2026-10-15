@@ -40,6 +40,16 @@ EMOTIONS = {
     6: {"name": "Neutral",     "color": (170, 170, 170)}, # Gris
 }
 
+ACADEMIC_MAPPING = {
+    0: {"indicator": "Frustración / Incomprensión", "short": "Frustración"},
+    1: {"indicator": "Ansiedad / Rechazo a la tarea", "short": "Rechazo Tarea"},
+    2: {"indicator": "Ansiedad / Rechazo a la tarea", "short": "Ansiedad"},
+    3: {"indicator": "Compromiso (Engagement) / Satisfacción", "short": "Engagement"},
+    4: {"indicator": "Desmotivación / Agotamiento", "short": "Desmotivación"},
+    5: {"indicator": "Comprensión repentina (Insight) o Asombro", "short": "Insight"},
+    6: {"indicator": "Atención / Estado de concentración", "short": "Atención / Concentración"},
+}
+
 # Umbrales mínimos de confianza adaptativos
 CONF_THRESHOLDS = {
     0: 0.30,   # Enojado     — ULTRA SENSIBLE (baja exigencia para responder al ceño fruncido)
@@ -367,6 +377,7 @@ class PortableEmotionTracker:
             if t.get("reid_banner", 0) > 0:
                 t["reid_banner"] -= 1
 
+            acad_info = ACADEMIC_MAPPING.get(disp_idx, {})
             res.append({
                 "id": tid,
                 "emotion_color": emotion_color,
@@ -377,6 +388,8 @@ class PortableEmotionTracker:
                 "pred_idx": disp_idx,
                 "label": EMOTIONS[disp_idx]["name"],
                 "conf": float(boosted[disp_idx]) * 100.0,
+                "academic_indicator": acad_info.get("indicator", "Atención"),
+                "academic_short": acad_info.get("short", "Atención"),
                 "landmarks": t["landmarks"],
                 "reid_banner": t.get("reid_banner", 0),
             })
@@ -392,6 +405,7 @@ def _draw_probability_card_portable(frame, card_x, card_y, card_w, card_h, track
     person_label  = track["person_label"]
     pred_idx      = track["pred_idx"]
     probs         = track["boosted_probs"]
+    acad_short    = track.get("academic_short", "")
 
     overlay = frame.copy()
     cv2.rectangle(overlay, (card_x, card_y), (card_x + card_w, card_y + card_h), (12, 14, 20), -1)
@@ -399,18 +413,26 @@ def _draw_probability_card_portable(frame, card_x, card_y, card_w, card_h, track
     cv2.addWeighted(overlay, 0.85, frame, 0.15, 0, frame)
 
     header_text = f"{person_label} | {track['label'].upper()}"
-    cv2.putText(frame, header_text, (card_x + 8, card_y + 15),
+    cv2.putText(frame, header_text, (card_x + 8, card_y + 14),
                 cv2.FONT_HERSHEY_DUPLEX, 0.38, emotion_color, 1, cv2.LINE_AA)
-    cv2.line(frame, (card_x + 6, card_y + 20), (card_x + card_w - 6, card_y + 20), (50, 55, 70), 1)
+
+    if acad_short:
+        cv2.putText(frame, f"Aula: {acad_short}", (card_x + 8, card_y + 26),
+                    cv2.FONT_HERSHEY_DUPLEX, 0.31, (0, 235, 255), 1, cv2.LINE_AA)
+        sep_y = card_y + 30
+    else:
+        sep_y = card_y + 19
+
+    cv2.line(frame, (card_x + 6, sep_y), (card_x + card_w - 6, sep_y), (50, 55, 70), 1)
 
     num_emos = len(probs)
-    avail_bar_h = card_h - 26
-    bar_h = max(9, avail_bar_h // num_emos - 2)
-    max_bar_w = card_w - 65
+    avail_bar_h = card_h - (sep_y - card_y + 6)
+    bar_h = max(8, avail_bar_h // num_emos - 2)
+    max_bar_w = card_w - 68
 
     for i in range(num_emos):
         prob = float(probs[i])
-        by = card_y + 24 + i * (bar_h + 2)
+        by = sep_y + 4 + i * (bar_h + 2)
         is_active = (i == pred_idx)
         bar_color = EMOTIONS[i]["color"]
 
@@ -641,9 +663,10 @@ def run_portable_app():
             cv2.line(frame, (x+w, y+h), (x+w-clen, y+h), emo_color, 3)
             cv2.line(frame, (x+w, y+h), (x+w, y+h-clen), emo_color, 3)
 
-            badge_text = f"{p_label}: {t['label']} {t['conf']:.0f}%"
+            acad_short = t.get("academic_short", "")
+            badge_text = f"{p_label}: {t['label']} {t['conf']:.0f}% [{acad_short}]" if acad_short else f"{p_label}: {t['label']} {t['conf']:.0f}%"
             cv2.putText(frame, badge_text, (x, max(20, y - 8)),
-                        cv2.FONT_HERSHEY_DUPLEX, 0.48, emo_color, 1, cv2.LINE_AA)
+                        cv2.FONT_HERSHEY_DUPLEX, 0.44, emo_color, 1, cv2.LINE_AA)
 
             if t.get("reid_banner", 0) > 0:
                 cv2.rectangle(frame, (x, max(3, y - 26)), (x + 160, max(21, y - 8)), (0, 160, 80), -1)
@@ -667,7 +690,7 @@ def run_portable_app():
         prev_time = curr_time
 
         cv2.rectangle(frame, (0, 0), (w_f, 28), (15, 15, 20), -1)
-        cv2.putText(frame, f"FPS: {fps:.1f} | Cam [{cam_idx}] | EMA: AUTO | {len(tracks)} ACTIVOS | {len(tracker.gallery)} RE-ID",
+        cv2.putText(frame, f"AULA UPN | FPS: {fps:.1f} | Cam [{cam_idx}] | {len(tracks)} ALUMNOS | RE-ID: {len(tracker.gallery)}",
                     (10, 19), cv2.FONT_HERSHEY_DUPLEX, 0.38, (0, 220, 255), 1, cv2.LINE_AA)
 
         cv2.imshow(window_name, frame)

@@ -44,17 +44,20 @@ graph LR
 
 ---
 
-## 🏷️ 3. Emociones Clasificadas (7 Clases)
+## 🏷️ 3. Mapeo de las 7 Emociones Básicas con la Problemática Académica
 
-| ID | Emoción en Español | Emoción en Inglés | Emoji |
-|:--:|:------------------|:------------------|:-----:|
-| 0  | Enojado           | Angry             | 😠    |
-| 1  | Disgusto          | Disgust           | 🤢    |
-| 2  | Miedo             | Fear              | 😨    |
-| 3  | Feliz             | Happy             | 😃    |
-| 4  | Triste            | Sad               | 😢    |
-| 5  | Sorprendido       | Surprise          | 😲    |
-| 6  | Neutral           | Neutral           | 😐    |
+Para que el jurado no cuestione por qué se utiliza un clasificador de 7 emociones (*alegría, tristeza, enojo, sorpresa, neutral, temor, disgusto*) en un contexto académico, cada etiqueta está formalmente justificada con su significado operativo e indicador pedagógico en el aula:
+
+| Emoción del Dataset | Indicador Académico Asociado | Justificación dentro de la Problemática |
+|:-------------------|:-----------------------------|:----------------------------------------|
+| **Neutral** | Atención / Estado de concentración | Representa el estado base de escucha o lectura fluida. |
+| **Tristeza** | Desmotivación / Agotamiento | La acumulación continua de esta etiqueta sugiere fatiga o desánimo frente al material. |
+| **Enojo** | Frustración / Incomprensión | Surge cuando el estudiante no comprende un ejercicio o enfrenta dificultades técnicas/conceptuales. |
+| **Sorpresa** | Comprensión repentina (*Insight*) o Asombro | Indica momentos de alto impacto en la explicación o dinamismo en la clase. |
+| **Temor / Disgusto** | Ansiedad / Rechazo a la tarea | Asociado al estrés previo a una evaluación, sobrecarga académica o disgusto por la dinámica. |
+| **Alegría** | Compromiso (*Engagement*) / Satisfacción | Refleja un ambiente de aprendizaje receptivo y comprensión clara del tema. |
+
+> **Nota para el Jurado:** El sistema opera estrictamente como un sensor tecnológico no invasivo de la dinámica afectiva grupal y del clima en el aula. No realiza inferencias clínicas ni diagnósticos psicológicos individuales.
 
 ---
 

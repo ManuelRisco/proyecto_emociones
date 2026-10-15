@@ -27,6 +27,8 @@ from src.config import (
     EMOTION_CONFIDENCE_THRESHOLDS, EMOTION_DEBOUNCE_FRAMES,
     EMOTION_SENSITIVITY_BOOST, EMOTION_DEBOUNCE_BY_CLASS,
     REID_SIMILARITY_THRESHOLD, REID_TEMPLATE_SIZE,
+    ACADEMIC_EMOTION_MAPPING, get_academic_indicator,
+    get_academic_short_indicator, get_academic_justification,
 )
 from src.predict import FaceDetector, load_model, preprocess_face, align_and_crop_face
 
@@ -340,19 +342,22 @@ class FaceTracker:
                 tk["reidentified_banner"] -= 1
 
             result.append({
-                "id":                  tid,
-                "person_label":        person_label,
-                "emotion_color":       emotion_color,
-                "bbox":                tk["bbox"],
-                "probs":               probs,
-                "boosted_probs":       boosted,
-                "pred_idx":            display_idx,
-                "raw_pred_idx":        raw_best_idx,
-                "pred_label":          EMOTION_LABELS[display_idx],
-                "confidence":          float(boosted[display_idx]) * 100,
-                "landmarks":           tk["landmarks"],
-                "det_confidence":      tk["confidence"] * 100,
-                "reidentified_banner": tk.get("reidentified_banner", 0),
+                "id":                      tid,
+                "person_label":            person_label,
+                "emotion_color":           emotion_color,
+                "bbox":                    tk["bbox"],
+                "probs":                   probs,
+                "boosted_probs":           boosted,
+                "pred_idx":                display_idx,
+                "raw_pred_idx":            raw_best_idx,
+                "pred_label":              EMOTION_LABELS[display_idx],
+                "confidence":              float(boosted[display_idx]) * 100,
+                "academic_indicator":      get_academic_indicator(display_idx),
+                "academic_short":          get_academic_short_indicator(display_idx),
+                "academic_justification":  get_academic_justification(display_idx),
+                "landmarks":               tk["landmarks"],
+                "det_confidence":          tk["confidence"] * 100,
+                "reidentified_banner":     tk.get("reidentified_banner", 0),
             })
         return result
 
@@ -396,24 +401,44 @@ def _draw_styled_bbox(
         cv2.line(frame, (px, py), (px + dx, py + dy), color, thickness)
 
 
+def _clean_cv2_text(text: str) -> str:
+    """Elimina tildes para renderizado perfecto en OpenCV HERSHEY."""
+    trans = str.maketrans("áéíóúÁÉÍÓÚñÑ", "aeiouAEIOUnN")
+    return text.translate(trans)
+
+
 def _draw_emotion_badge(
     frame: np.ndarray, x: int, y: int,
     label: str, confidence: float, emotion_color: tuple, person_label: str,
+    academic_indicator: str = "",
+    show_academic: bool = True,
     reidentified_banner: int = 0,
 ) -> tuple[int, int]:
-    """Dibuja badge superior identificando al sujeto con el color de la emoción."""
-    text = f"{person_label}: {label.upper()} {confidence:.0f}%"
+    """Dibuja badge superior identificando al sujeto con el color de la emoción y su indicador pedagógico."""
     font = cv2.FONT_HERSHEY_DUPLEX
-    (tw, th), _ = cv2.getTextSize(text, font, 0.45, 1)
-    badge_y = max(46, y - th - 14)
+    line1 = _clean_cv2_text(f"{person_label}: {label.upper()} {confidence:.0f}%")
+    line2 = _clean_cv2_text(f"Aula: {academic_indicator}") if (show_academic and academic_indicator) else ""
+
+    (tw1, th1), _ = cv2.getTextSize(line1, font, 0.44, 1)
+    if line2:
+        (tw2, th2), _ = cv2.getTextSize(line2, font, 0.35, 1)
+        tw = max(tw1, tw2)
+        total_th = th1 + th2 + 6
+    else:
+        tw = tw1
+        total_th = th1
+
+    badge_y = max(46, y - total_th - 14)
 
     overlay = frame.copy()
-    cv2.rectangle(overlay, (x, badge_y), (x + tw + 18, badge_y + th + 10), (15, 15, 20), -1)
-    cv2.rectangle(overlay, (x, badge_y), (x + tw + 18, badge_y + th + 10), emotion_color, 1)
+    cv2.rectangle(overlay, (x, badge_y), (x + tw + 18, badge_y + total_th + 10), (15, 15, 20), -1)
+    cv2.rectangle(overlay, (x, badge_y), (x + tw + 18, badge_y + total_th + 10), emotion_color, 1)
     cv2.addWeighted(overlay, 0.85, frame, 0.15, 0, frame)
 
-    cv2.circle(frame, (x + 8, badge_y + th // 2 + 5), 4, emotion_color, -1)
-    cv2.putText(frame, text, (x + 18, badge_y + th + 3), font, 0.42, (255, 255, 255), 1, cv2.LINE_AA)
+    cv2.circle(frame, (x + 8, badge_y + th1 // 2 + 5), 4, emotion_color, -1)
+    cv2.putText(frame, line1, (x + 18, badge_y + th1 + 3), font, 0.42, (255, 255, 255), 1, cv2.LINE_AA)
+    if line2:
+        cv2.putText(frame, line2, (x + 18, badge_y + th1 + th2 + 7), font, 0.34, (0, 235, 255), 1, cv2.LINE_AA)
 
     if reidentified_banner > 0:
         re_txt = "MEMORIA: RE-IDENTIFICADO"
@@ -423,22 +448,24 @@ def _draw_emotion_badge(
         cv2.rectangle(frame, (rx, ry), (rx + rw + 8, ry + rh + 4), (0, 160, 80), -1)
         cv2.putText(frame, re_txt, (rx + 4, ry + rh + 1), font, 0.34, (255, 255, 255), 1, cv2.LINE_AA)
 
-    return (x + tw + 18, badge_y + th // 2 + 5)
+    return (x + tw + 18, badge_y + total_th // 2 + 5)
 
 
 def _draw_probability_card(
     frame: np.ndarray,
     card_x: int, card_y: int, card_w: int, card_h: int,
     track: dict,
+    show_academic: bool = True,
 ) -> None:
     """
     Renderiza una tarjeta gráfica independiente donde cada emoción tiene su
-    propio color tradicional (rojo, verde, morado, amarillo, azul, naranja, gris).
+    propio color tradicional y muestra el indicador pedagógico del aula.
     """
     emotion_color = track["emotion_color"]
     person_label  = track["person_label"]
     pred_idx      = track["pred_idx"]
     probs         = track["boosted_probs"]
+    acad_short    = track.get("academic_short", "")
 
     overlay = frame.copy()
     cv2.rectangle(overlay, (card_x, card_y), (card_x + card_w, card_y + card_h), (12, 14, 20), -1)
@@ -446,20 +473,28 @@ def _draw_probability_card(
     cv2.addWeighted(overlay, 0.85, frame, 0.15, 0, frame)
 
     header_text = f"{person_label} | {track['pred_label'].upper()}"
-    cv2.putText(frame, header_text, (card_x + 8, card_y + 15),
+    cv2.putText(frame, header_text, (card_x + 8, card_y + 14),
                 cv2.FONT_HERSHEY_DUPLEX, 0.38, emotion_color, 1, cv2.LINE_AA)
-    cv2.line(frame, (card_x + 6, card_y + 20), (card_x + card_w - 6, card_y + 20), (50, 55, 70), 1)
+
+    if show_academic and acad_short:
+        sub_text = _clean_cv2_text(f"Aula: {acad_short}")
+        cv2.putText(frame, sub_text, (card_x + 8, card_y + 26),
+                    cv2.FONT_HERSHEY_DUPLEX, 0.31, (0, 235, 255), 1, cv2.LINE_AA)
+        sep_y = card_y + 30
+    else:
+        sep_y = card_y + 19
+
+    cv2.line(frame, (card_x + 6, sep_y), (card_x + card_w - 6, sep_y), (50, 55, 70), 1)
 
     num_emos = len(probs)
-    avail_bar_h = card_h - 26
-    bar_h = max(9, avail_bar_h // num_emos - 2)
-    max_bar_w = card_w - 65
+    avail_bar_h = card_h - (sep_y - card_y + 6)
+    bar_h = max(8, avail_bar_h // num_emos - 2)
+    max_bar_w = card_w - 68
 
     for i in range(num_emos):
         prob = float(probs[i])
-        by = card_y + 24 + i * (bar_h + 2)
+        by = sep_y + 4 + i * (bar_h + 2)
         is_active = (i == pred_idx)
-        # Cada emoción usa su color característico original
         bar_color = EMOTION_COLORS[i]
 
         fill_w = int(max_bar_w * prob)
@@ -468,7 +503,6 @@ def _draw_probability_card(
             if is_active:
                 cv2.rectangle(frame, (card_x + 36, by), (card_x + 36 + fill_w, by + bar_h), bar_color, -1)
             else:
-                # Color atenuado si no es la emoción dominante
                 dimmed_color = tuple(int(c * 0.45) for c in bar_color)
                 cv2.rectangle(frame, (card_x + 36, by), (card_x + 36 + fill_w, by + bar_h), dimmed_color, -1)
 
@@ -484,6 +518,7 @@ def _draw_biometric_reports(
     frame: np.ndarray,
     tracks: list[dict],
     show_graphs: bool = True,
+    show_academic: bool = True,
 ) -> None:
     """
     Gestiona los reportes independientes por sujeto:
@@ -499,27 +534,27 @@ def _draw_biometric_reports(
     if num_tracks == 1:
         track = tracks[0]
         x, y, w, h = track["bbox"]
-        card_w, card_h = 175, 125
+        card_w, card_h = (195, 138) if show_academic else (175, 125)
         card_x = x + w + 14
         card_y = max(48, min(y, h_f - card_h - 30))
         if card_x + card_w >= w_f:
             card_x = max(10, x - card_w - 14)
 
-        _draw_probability_card(frame, card_x, card_y, card_w, card_h, track)
+        _draw_probability_card(frame, card_x, card_y, card_w, card_h, track, show_academic=show_academic)
         cv2.line(frame, (x + w, y + h // 2), (card_x, y + h // 2), track["emotion_color"], 1, cv2.LINE_AA)
 
     else:
-        dock_w = 175
+        dock_w = 195 if show_academic else 175
         dock_x = w_f - dock_w - 8
         avail_h = h_f - 46 - 28 - 10
-        card_h = min(120, max(85, (avail_h - (num_tracks - 1) * 8) // num_tracks))
+        card_h = min(135 if show_academic else 120, max(90, (avail_h - (num_tracks - 1) * 8) // num_tracks))
 
         for idx, track in enumerate(tracks):
             card_y = 48 + idx * (card_h + 8)
             if card_y + card_h > h_f - 26:
                 break
 
-            _draw_probability_card(frame, dock_x, card_y, dock_w, card_h, track)
+            _draw_probability_card(frame, dock_x, card_y, dock_w, card_h, track, show_academic=show_academic)
 
             fx, fy, fw, fh = track["bbox"]
             face_anchor = (fx + fw, fy + fh // 2)
@@ -536,8 +571,9 @@ def _draw_hud_header(
     frame: np.ndarray, fps: float, latency_ms: float,
     is_cuda: bool, paused: bool,
     num_persons: int = 0, gallery_count: int = 0,
+    show_academic: bool = True,
 ) -> None:
-    """Barra superior con métricas y estado del sistema."""
+    """Barra superior con métricas y estado del sistema pedagógico."""
     h, w  = frame.shape[:2]
     font  = cv2.FONT_HERSHEY_DUPLEX
     overlay = frame.copy()
@@ -545,29 +581,31 @@ def _draw_hud_header(
     cv2.line(overlay, (0, 42), (w, 42), (0, 200, 240), 1)
     cv2.addWeighted(overlay, 0.85, frame, 0.15, 0, frame)
 
-    cv2.putText(frame, "EMOTION AI v2.0 | RE-ID BIOMETRICS", (14, 18), font, 0.44, (0, 220, 255), 1, cv2.LINE_AA)
-    cv2.putText(frame, f"ACTIVOS: {num_persons} | MEMORIA RE-ID: {gallery_count} SUJETOS",
-                (14, 34), font, 0.36, (0, 255, 160) if num_persons > 0 else (140, 140, 140), 1, cv2.LINE_AA)
+    title_txt = "EMOTION AI v2.0 | ANALIZADOR AFECTIVO EN AULA (UPN)" if show_academic else "EMOTION AI v2.0 | RE-ID BIOMETRICS"
+    cv2.putText(frame, title_txt, (14, 18), font, 0.42, (0, 220, 255), 1, cv2.LINE_AA)
+    sub_txt = f"ALUMNOS ACTIVOS: {num_persons} | INDICADORES: {'ACTIVOS' if show_academic else 'OCULTOS'} | RE-ID: {gallery_count}"
+    cv2.putText(frame, sub_txt, (14, 34), font, 0.34, (0, 255, 160) if num_persons > 0 else (140, 140, 140), 1, cv2.LINE_AA)
 
-    cv2.putText(frame, f"FPS: {fps:.1f} | Lat: {latency_ms:.1f}ms", (w // 2 - 110, 18), font, 0.42, (255, 255, 255), 1, cv2.LINE_AA)
-    cv2.putText(frame, "DET: YUNET ONNX", (w // 2 - 110, 34), font, 0.38, (0, 230, 255), 1, cv2.LINE_AA)
+    cv2.putText(frame, f"FPS: {fps:.1f} | Lat: {latency_ms:.1f}ms", (w // 2 - 100, 18), font, 0.40, (255, 255, 255), 1, cv2.LINE_AA)
+    cv2.putText(frame, "DET: YUNET ONNX", (w // 2 - 100, 34), font, 0.36, (0, 230, 255), 1, cv2.LINE_AA)
 
-    cv2.putText(frame, "EMA: AUTO", (w - 150, 26), font, 0.40, (0, 255, 180), 1, cv2.LINE_AA)
+    cv2.putText(frame, "EMA: AUTO", (w - 140, 26), font, 0.38, (0, 255, 180), 1, cv2.LINE_AA)
 
     if paused:
         cv2.putText(frame, "[PAUSADO]", (w // 2 - 45, h // 2), font, 0.9, (0, 0, 255), 2, cv2.LINE_AA)
 
 
-def _draw_hud_footer(frame: np.ndarray) -> None:
+def _draw_hud_footer(frame: np.ndarray, show_academic: bool = True) -> None:
     """Barra inferior con controles interactivos."""
     h, w = frame.shape[:2]
     overlay = frame.copy()
     cv2.rectangle(overlay, (0, h - 24), (w, h), (12, 12, 16), -1)
     cv2.addWeighted(overlay, 0.85, frame, 0.15, 0, frame)
+    acad_label = "a:Aula[ON]" if show_academic else "a:Aula[OFF]"
     cv2.putText(
         frame,
-        "q:Salir | g:Graficas | l:Landmarks | c:Cam | s:Capturar Foto | p:Pausar",
-        (14, h - 7), cv2.FONT_HERSHEY_SIMPLEX, 0.34, (210, 220, 230), 1, cv2.LINE_AA,
+        f"q:Salir | {acad_label} | g:Graficas | l:Landmarks | c:Cam | s:Capturar Foto | p:Pausar",
+        (14, h - 7), cv2.FONT_HERSHEY_SIMPLEX, 0.33, (210, 220, 230), 1, cv2.LINE_AA,
     )
 
 
@@ -606,6 +644,7 @@ def run_realtime() -> None:
 
     print("\n" + "=" * 60)
     print("   [OK] Sistema biométrico activo. Atajos:")
+    print("   |-- 'a': Alternar Modo Aula / Indicadores Pedagógicos")
     print("   |-- 'g': Mostrar/Ocultar Gráficas de Emoción")
     print("   |-- 'l': Puntos Faciales (Landmarks)")
     print("   |-- 's': Capturar foto (Limpia: solo cámara, rostros y gráficas)")
@@ -614,6 +653,7 @@ def run_realtime() -> None:
     print("   +-- 'q' / ESC: Salir")
     print("=" * 60)
 
+    show_academic   = True
     show_landmarks  = True
     show_graphs     = True
     paused          = False
@@ -684,6 +724,8 @@ def run_realtime() -> None:
                 _draw_emotion_badge(
                     frame, x, y, track["pred_label"], track["confidence"],
                     emotion_color=emo_color, person_label=p_label,
+                    academic_indicator=track.get("academic_indicator", ""),
+                    show_academic=show_academic,
                     reidentified_banner=track.get("reidentified_banner", 0),
                 )
 
@@ -692,7 +734,7 @@ def run_realtime() -> None:
                         cv2.circle(frame, (int(pt[0]), int(pt[1])), 2, (0, 255, 255), -1, cv2.LINE_AA)
 
             # Reportes y gráficas multi-persona
-            _draw_biometric_reports(frame, active_tracks, show_graphs=show_graphs)
+            _draw_biometric_reports(frame, active_tracks, show_graphs=show_graphs, show_academic=show_academic)
 
         # Captura limpia para fotos (solo cámara, recuadros, gráficas y puntos, sin barras de menú)
         clean_capture = frame.copy()
@@ -708,8 +750,9 @@ def run_realtime() -> None:
         _draw_hud_header(
             frame, fps, latency_ms, is_cuda, paused,
             num_persons=len(active_tracks), gallery_count=len(tracker.gallery),
+            show_academic=show_academic,
         )
-        _draw_hud_footer(frame)
+        _draw_hud_footer(frame, show_academic=show_academic)
 
         cv2.imshow(WINDOW_NAME, frame)
 
@@ -717,6 +760,9 @@ def run_realtime() -> None:
 
         if key in (ord("q"), 27):
             break
+        elif key == ord("a"):
+            show_academic = not show_academic
+            print(f"   [MODO AULA / INDICADORES ACADÉMICOS] {'ACTIVADO' if show_academic else 'DESACTIVADO'}")
         elif key == ord("g"):
             show_graphs = not show_graphs
             print(f"   [GRAFICAS BIOMETRICAS] {'VISIBLES' if show_graphs else 'OCULTAS'}")

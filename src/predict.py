@@ -29,6 +29,8 @@ from src.config import (
     EMOTION_EMOJIS, EMOTION_LABELS, EMOTION_SENSITIVITY_BOOST,
     IMG_SIZE, NUM_CLASSES, PLOTS_DIR,
     YUNET_MODEL_PATH, YUNET_NMS_THRESHOLD, YUNET_SCORE_THRESHOLD,
+    ACADEMIC_EMOTION_MAPPING, get_academic_indicator,
+    get_academic_short_indicator, get_academic_justification,
 )
 from src.model import build_model
 
@@ -378,14 +380,20 @@ def predict_single_image(
         pred_label = EMOTION_LABELS[pred_idx]
         confidence = float(boosted[pred_idx]) * 100
         emoji = EMOTION_EMOJIS.get(pred_idx, "")
+        acad_indicator = get_academic_indicator(pred_idx)
+        acad_short     = get_academic_short_indicator(pred_idx)
+        acad_just      = get_academic_justification(pred_idx)
 
         result = {
-            "face_index":      i,
-            "bbox":            (x, y, w, h),
-            "face_confidence": det["confidence"] * 100,
-            "predicted_class": pred_idx,
-            "predicted_label": pred_label,
-            "confidence":      confidence,
+            "face_index":             i,
+            "bbox":                   (x, y, w, h),
+            "face_confidence":        det["confidence"] * 100,
+            "predicted_class":        pred_idx,
+            "predicted_label":        pred_label,
+            "confidence":             confidence,
+            "academic_indicator":     acad_indicator,
+            "academic_short":         acad_short,
+            "academic_justification": acad_just,
             "probabilities": {
                 EMOTION_LABELS[j]: float(boosted[j]) * 100
                 for j in range(NUM_CLASSES)
@@ -394,9 +402,11 @@ def predict_single_image(
         }
         results.append(result)
 
-        print(f"\n   {'─' * 45}")
+        print(f"\n   {'─' * 55}")
         print(f"   Rostro #{i+1}: {pred_label} {emoji} ({confidence:.1f}%) [Det: {det['confidence']*100:.0f}%]")
-        print(f"   {'─' * 45}")
+        print(f"   [Indicador Aula]: {acad_indicator}")
+        print(f"   [Justificación]:  {acad_just}")
+        print(f"   {'─' * 55}")
         for label, prob in sorted(result["probabilities"].items(), key=lambda kv: kv[1], reverse=True):
             print(f"     {label:>12}: {prob:5.1f}% {'=' * int(prob / 2)}")
 
@@ -432,10 +442,12 @@ def _plot_face_bars(ax, r: dict, face_idx: int, face_color: tuple) -> None:
     ax.set_xlim(0, 100)
     ax.grid(axis="x", alpha=0.3, linestyle="--")
 
-    # Título en el color asignado a este rostro
+    # Título con emoción dominante e indicador académico para el jurado
+    acad_ind = r.get("academic_indicator", get_academic_indicator(r.get("predicted_class", 6)))
     ax.set_title(
-        f"Rostro #{face_idx + 1}: {r['predicted_label'].upper()} ({r['confidence']:.1f}%)",
-        fontsize=11, fontweight="bold", color=face_color, pad=10,
+        f"Rostro #{face_idx + 1}: {r['predicted_label'].upper()} ({r['confidence']:.1f}%)\n"
+        f"Indicador Aula: {acad_ind}",
+        fontsize=10.5, fontweight="bold", color=face_color, pad=8,
     )
 
     # Marco con el color del rostro para asociarlo visualmente al instante
@@ -448,6 +460,12 @@ def _plot_face_bars(ax, r: dict, face_idx: int, face_color: tuple) -> None:
         ax.text(v + 1.2, i, f"{v:.1f}%", va="center", fontsize=9, fontweight="bold")
 
 
+def _clean_cv2_text(text: str) -> str:
+    """Elimina tildes para renderizado perfecto en OpenCV HERSHEY."""
+    trans = str.maketrans("áéíóúÁÉÍÓÚñÑ", "aeiouAEIOUnN")
+    return text.translate(trans)
+
+
 def _visualize_prediction(img: np.ndarray, results: list[dict]) -> None:
     """
     Genera y guarda una visualización completa de la predicción.
@@ -457,11 +475,20 @@ def _visualize_prediction(img: np.ndarray, results: list[dict]) -> None:
     from matplotlib.gridspec import GridSpec
 
     img_rgb = cv2.cvtColor(img, cv2.COLOR_BGR2RGB)
+    h_orig, w_orig = img_rgb.shape[:2]
+
+    # Si la imagen es miniatura (ej. 48x48 del dataset FER), reescalar para visualización nítida
+    scale = 1.0
+    if max(h_orig, w_orig) < 250:
+        scale = 360.0 / max(h_orig, w_orig)
+        img_rgb = cv2.resize(img_rgb, (int(w_orig * scale), int(h_orig * scale)), interpolation=cv2.INTER_NEAREST)
+
     h_img, w_img = img_rgb.shape[:2]
 
     # 1. Distinguir cada rostro en la imagen con colores y badges individuales
     for i, r in enumerate(results):
-        x, y, w, h = r["bbox"]
+        rx, ry, rw, rh = r["bbox"]
+        x, y, w, h = int(rx * scale), int(ry * scale), int(rw * scale), int(rh * scale)
         col_rgb = FACE_PALETTE_RGB[i % len(FACE_PALETTE_RGB)]
         col_255 = tuple(int(c * 255) for c in col_rgb)
 
@@ -469,12 +496,18 @@ def _visualize_prediction(img: np.ndarray, results: list[dict]) -> None:
 
         if r.get("landmarks") is not None:
             for pt in r["landmarks"]:
-                cv2.circle(img_rgb, (int(pt[0]), int(pt[1])), 4, col_255, -1)
-                cv2.circle(img_rgb, (int(pt[0]), int(pt[1])), 2, (255, 255, 255), -1)
+                lx, ly = int(pt[0] * scale), int(pt[1] * scale)
+                cv2.circle(img_rgb, (lx, ly), 4, col_255, -1)
+                cv2.circle(img_rgb, (lx, ly), 2, (255, 255, 255), -1)
 
-        badge_text = f"Rostro #{i+1}: {r['predicted_label']} {r['confidence']:.0f}%"
+        acad_short = r.get("academic_short", "")
+        if acad_short:
+            badge_text = f"Rostro #{i+1}: {r['predicted_label']} {r['confidence']:.0f}% [{acad_short}]"
+        else:
+            badge_text = f"Rostro #{i+1}: {r['predicted_label']} {r['confidence']:.0f}%"
+        badge_text = _clean_cv2_text(badge_text)
         font = cv2.FONT_HERSHEY_DUPLEX
-        font_scale = max(0.42, min(0.65, w / 180.0))
+        font_scale = max(0.38, min(0.60, w / 220.0))
         (tw, th), _ = cv2.getTextSize(badge_text, font, font_scale, 1)
 
         badge_x1 = max(0, x)
